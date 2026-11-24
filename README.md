@@ -2,8 +2,7 @@
 
 A simple card game, played especially in Nepal. You play against 1 to 4 bots.
 
-> Vibe-coded by Sachin Sigdel: the whole game, from the rules engine to the Chrome extension,
-> was built by describing it to an AI coding assistant.
+> Vibe-coded the whole game. 
 
 ## Rules
 
