@@ -8,11 +8,14 @@ Two game modes (see Match):
   * Race to 100: rounds are played until one player is left. Each round the winner scores 0
     and everyone else adds their hand total to the score table (a caught caller adds
     CAUGHT_PENALTY on top); reaching 100 points knocks a player out. The last player
-    standing wins. The winner of each round starts the next one (the first is random).
+    standing wins. The player after each round's winner starts the next round (the first
+    starter is random).
 
 A round:
-  0. Opening call: before anyone throws, each player in turn may call a showdown if their
-     hand is OPENING_CALL_LIMIT (15) or less.
+  0. Opening call ("Salami"): before anyone throws, each player in turn may call a showdown
+     if their hand is OPENING_CALL_LIMIT (15) or less. Catching works as usual. If the caller
+     is caught, the round scores like any other; if not, every other player scores their hand
+     plus SALAMI_BONUS (10).
   Then players take turns in seat order. A turn is:
   1. Optionally call a showdown instead of playing, if your total is the call limit or less
      (5, 10 or 15, chosen at the start). Everyone reveals. If nobody has a total equal to or
@@ -44,6 +47,7 @@ CALL_LIMITS = (5, 10, 15)          # call a showdown during play with this much 
 DEFAULT_CALL_LIMIT = 5
 OPENING_CALL_LIMIT = 15            # before the first throw of a round, anyone this low may call
 CAUGHT_PENALTY = 25                # added to a caught caller's total
+SALAMI_BONUS = 10                  # a Salami that isn't caught adds this to everyone else's hand
 BOT_OPENING_CALL = 10              # bots only risk an opening call with this much or less
 MAX_TURNS = 300                    # a round this long ends like a deck-out (no winner)
 HAND_SIZE = 5
@@ -135,6 +139,7 @@ class ShowdownResult:
                                     # caller their total + CAUGHT_PENALTY, everyone else their total
     tiebreak: str | None = None     # how tied catchers were split: "fewer cards" or "turn order"
     deck_out: bool = False          # ended because the deck ran out a second time
+    salami: bool = False            # called before anyone threw (an opening call)
 
 
 @dataclass
@@ -345,6 +350,7 @@ class DumbalGame:
         self._require(name, OPENING, THROW)
         if self.total(name) > self.limit_now():
             raise GameError(f"Not eligible: your total must be {self.limit_now()} or less.")
+        salami = self.phase == OPENING            # nobody has thrown yet
         totals = {player: self.total(player) for player in self.players}
         catchers = [p for p in self.players if p != name and totals[p] <= totals[name]]
         tiebreak = None
@@ -366,6 +372,8 @@ class DumbalGame:
                 points[player] = 0
             elif player == name:
                 points[player] = totals[player] + CAUGHT_PENALTY
+            elif salami and not catchers:
+                points[player] = totals[player] + SALAMI_BONUS   # an uncaught Salami
             else:
                 points[player] = totals[player]
         self.result = ShowdownResult(
@@ -376,6 +384,7 @@ class DumbalGame:
             caught=bool(catchers),
             points=points,
             tiebreak=tiebreak,
+            salami=salami,
         )
         return self.result
 
@@ -449,7 +458,8 @@ class Match:
     caller adds CAUGHT_PENALTY on top; after a deck-out everyone adds their hand).
     Reaching RACE_LIMIT points knocks a player out; the last player standing wins (if all
     the players left are knocked out together, the lowest score among them wins).
-    The winner of a round starts the next one; the first round's starter is random.
+    The player seated after a round's winner starts the next round (with no winner, the player
+    after that round's starter); the first round's starter is random.
     """
 
     def __init__(self, num_players: int = 5, jokers: int = 1, mode: str = QUICK,
@@ -523,11 +533,11 @@ class Match:
             best = min(self.scores[name] for name in knocked)
             self.finished = True
             self.winners = [name for name in knocked if self.scores[name] == best]
-        elif result.winners and result.winners[0] in self.active:
-            self.starter = result.winners[0]             # the round winner starts the next round
         else:
-            # no winner (deck ran out): the next player still in after this round's starter
-            i = self.seats.index(self.starter)
+            # the player after the round winner starts the next round (skipping anyone who is
+            # out); with no winner (deck ran out), the player after this round's starter does
+            anchor = result.winners[0] if result.winners else self.starter
+            i = self.seats.index(anchor)
             for step in range(1, len(self.seats) + 1):
                 candidate = self.seats[(i + step) % len(self.seats)]
                 if candidate not in self.out:

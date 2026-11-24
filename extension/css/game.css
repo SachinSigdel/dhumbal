@@ -1,10 +1,10 @@
 :root {
-  --bg: #050f09;
-  --panel: #0c1f14;
-  --gold: #ffd34d;
-  --text: #f4f1e6;
-  --muted: #9fc2ab;
-  --pill: #1d3a29;
+  --bg: #060b14;
+  --panel: #0b1626;
+  --gold: #e9c46a;
+  --text: #f5efe0;
+  --muted: #a9b8cc;
+  --pill: #1c3350;
   --font: "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
@@ -36,14 +36,14 @@ canvas {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(3, 10, 6, 0.55);
+  background: rgba(3, 7, 13, 0.6);
 }
 
 .backdrop[hidden] { display: none; }
 
 .dialog {
   background: var(--panel);
-  border: 2px solid #f2c14e;
+  border: 2px solid #d4af37;
   border-radius: 18px;
   padding: 22px 28px;
   width: min(420px, calc(100vw - 32px));
@@ -94,3 +94,15 @@ p { margin: 2px 0 0; }
   gap: 8px;
   margin-top: 18px;
 }
+
+/* ---------- toolbar popup: Chrome caps popups at 800x600 ---------- */
+html.popup, html.popup body {
+  width: 800px;
+  height: 600px;
+}
+
+html.popup .dialog {
+  padding: 16px 22px;
+}
+
+html.popup h2 { margin: 10px 0 5px; }
