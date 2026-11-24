@@ -145,6 +145,9 @@ class App {
     });
     this.windowId = null;
     globalThis.chrome?.windows?.getCurrent?.().then((w) => { this.windowId = w.id; }).catch(() => {});
+    // Brave doesn't show Chrome's extension side panel, so there we open a slim window instead
+    this.isBrave = false;
+    globalThis.navigator?.brave?.isBrave?.().then((yes) => { this.isBrave = !!yes; this.requestRender(); }).catch(() => {});
     if (!this.resume()) this.setup.open();
     this.requestRender();
   }
@@ -212,17 +215,48 @@ class App {
   region(x1, y1, x2, y2, handlers) { this.regions.push({ x1, y1, x2, y2, ...handlers }); }
 
   /** From the popup: move the game into Chrome's side panel, which stays open while you browse. */
+  /** From the popup: keep the game open while you browse. Chrome: its side panel.
+   *  Brave (no extension side panel) or anywhere the side panel fails: a slim Dhumbal window. */
   openSidePanel() {
     const sidePanel = globalThis.chrome?.sidePanel;
-    if (!sidePanel?.open || this.windowId === null) {
-      this.toast("This browser doesn't support opening the side panel");
+    this.save();
+    if (this.isBrave || !sidePanel?.open || this.windowId === null) {
+      this.openGameWindow();
+      return;
+    }
+    sidePanel.open({ windowId: this.windowId })      // must run inside the click
+      .then(() => window.close())
+      .catch(() => this.openGameWindow());
+  }
+
+  /** A separate, narrow window with the tall table; reuses the one already open. */
+  async openGameWindow() {
+    const windows = globalThis.chrome?.windows;
+    if (!windows?.create) {
+      this.toast("This browser can't open the game in its own window");
       this.sfx('nope');
       return;
     }
-    this.save();
-    sidePanel.open({ windowId: this.windowId })      // must run inside the click
-      .then(() => window.close())
-      .catch(() => this.toast("Couldn't open the side panel"));
+    const known = store.get('windowId', null);
+    if (known !== null) {
+      try {
+        await windows.update(known, { focused: true });   // already open: bring it to the front
+        window.close();
+        return;
+      } catch { /* it was closed */ }
+    }
+    const height = Math.min(960, (screen.availHeight || 900) - 40);
+    const width = Math.round(height * 0.5);
+    try {
+      const w = await windows.create({
+        url: globalThis.chrome.runtime.getURL('game.html?panel'), type: 'popup', width, height,
+        left: Math.max(0, (screen.availWidth || 1440) - width - 16), top: 24, focused: true,
+      });
+      store.set('windowId', w.id);
+      window.close();
+    } catch {
+      this.toast("Couldn't open the game window");
+    }
   }
 
   // ---------- sound ----------
@@ -681,7 +715,7 @@ class App {
     this.hint = '';
     if (game) this.drawGame(now);
     if (MODE === 'popup') {
-      this.drawButton('⇥ Open in side panel', W - 16, u(22), { anchor: 'right', onClick: () => { this.sfx('click'); this.openSidePanel(); } });
+      this.drawButton(this.isBrave ? '⇥ Open in a window' : '⇥ Open in side panel', W - 16, u(22), { anchor: 'right', onClick: () => { this.sfx('click'); this.openSidePanel(); } });
     }
     this.drawToast(now);
     this.drawBar();

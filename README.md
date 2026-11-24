@@ -76,8 +76,10 @@ same rules and bots, plus a real-looking deck (Byron Knoll's public-domain card 
 `extension/cards/CREDITS.txt`), a navy/burgundy/gold table, animations and sounds. It opens
 as a pop-up from the toolbar (like a wallet extension). Chrome closes pop-ups when you click
 away, so the game saves itself and resumes where you left off. **Open in side panel** moves
-the game into Chrome's side panel (a tall layout), which stays open while you browse; the
-pop-up and panel share the same saved game.
+the game into Chrome's side panel (a tall layout), which stays open while you browse. Brave
+doesn't show extension side panels, so there the button reads **Open in a window** and opens a
+slim Dhumbal window instead (also used if the side panel ever fails). The pop-up, panel and
+window all share the same saved game.
 
 To install it unpacked:
 
