@@ -1,0 +1,96 @@
+:root {
+  --bg: #050f09;
+  --panel: #0c1f14;
+  --gold: #ffd34d;
+  --text: #f4f1e6;
+  --muted: #9fc2ab;
+  --pill: #1d3a29;
+  --font: "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  overflow: hidden;
+  font-family: var(--font);
+  color: var(--text);
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+canvas {
+  display: block;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ---------- New game dialog ---------- */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3, 10, 6, 0.55);
+}
+
+.backdrop[hidden] { display: none; }
+
+.dialog {
+  background: var(--panel);
+  border: 2px solid #f2c14e;
+  border-radius: 18px;
+  padding: 22px 28px;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+h1 {
+  margin: 0;
+  color: var(--gold);
+  font-size: 24px;
+}
+
+h2 {
+  margin: 14px 0 6px;
+  font-size: 13px;
+}
+
+p { margin: 2px 0 0; }
+.muted { color: var(--muted); font-size: 12px; }
+.small { font-size: 12px; line-height: 1.4; }
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.choices button, .pill {
+  font: bold 14px var(--font);
+  border: 0;
+  border-radius: 17px;
+  padding: 7px 14px;
+  min-width: 44px;
+  background: var(--pill);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.choices button:hover, .pill:hover { filter: brightness(1.18); }
+.choices button.on, .pill.primary { background: var(--gold); color: #1b1b1b; }
+.choices button:focus-visible, .pill:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
