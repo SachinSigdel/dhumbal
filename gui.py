@@ -11,7 +11,7 @@ from sound import Sounds
 from cards import (auto_group, card_text, card_value, is_joker, is_red, joker_group,
                    joker_stands_for, order_throw)
 from game import (CALL_LIMITS, CAUGHT_PENALTY, DEFAULT_CALL_LIMIT, HUMAN, MAX_PLAYERS, MIN_PLAYERS, OPENING,
-                  OPENING_CALL_LIMIT, PICK, QUICK, RACE, RACE_LIMIT, THROW,
+                  OPENING_CALL_LIMIT, PICK, QUICK, RACE, RACE_LIMIT, SALAMI_BONUS, THROW,
                   DumbalGame, Match)
 
 W, H = 1040, 770               # fits a 1440x900 screen with the menu bar and title bar
@@ -170,7 +170,8 @@ class SetupDialog(tk.Toplevel):
                  fg=TEXT).pack(anchor="w")
         self.segmented(self.call_limit, [(v, f"{v} or less") for v in CALL_LIMITS]).pack(anchor="w", pady=(6, 4))
         tk.Label(self, text=f"Before the first throw of a round, anyone with {OPENING_CALL_LIMIT} or "
-                            f"less may call.", font=f(12), bg=PANEL, fg=MUTED).pack(anchor="w", pady=(0, 14))
+                            f"less may call Salami: if they're not caught, everyone else gets +{SALAMI_BONUS}.",
+                 font=f(12), bg=PANEL, fg=MUTED, wraplength=380, justify="left").pack(anchor="w", pady=(0, 14))
 
         buttons = tk.Frame(self, bg=PANEL)
         buttons.pack(fill="x", pady=(4, 0))
@@ -327,7 +328,7 @@ class DumbalApp:
         game = self.game
         first = who([game.players[game.first]])
         if game.phase == OPENING and game.current_player == HUMAN:
-            self.toast(f"Your hand is {game.total(HUMAN)}: you may call before anyone throws")
+            self.toast(f"Your hand is {game.total(HUMAN)}: you may call Salami before anyone throws")
         else:
             self.toast(f"{first} {'start' if first == 'You' else 'starts'}")
         self.schedule_bots()
@@ -848,6 +849,8 @@ class DumbalApp:
         c.create_window(W - 20, BAR_Y, anchor="e", window=self.call_btn)
         self.call_btn.set_enabled(bool(self.game) and self.game.can_call(HUMAN) and not self.animating)
         opening = self.my_turn(OPENING)
+        mode_label = "Call showdown · end game" if self.match is None or self.match.mode == QUICK else "Call showdown · end round"
+        self.call_btn.configure(text="Call Salami" if opening else mode_label)
         if opening:
             c.create_window(W - 20 - self.call_btn.winfo_reqwidth() - 8, BAR_Y, anchor="e", window=self.play_on_btn)
         left = 20 + self.new_btn.winfo_reqwidth() + 8 + self.sound_btn.winfo_reqwidth() + 14
@@ -920,6 +923,8 @@ class DumbalApp:
         total = result.totals[name]
         if name == result.caller and result.caught:
             note = f"total {total} + {CAUGHT_PENALTY}"
+        elif result.salami and not result.caught and name != result.caller:
+            note = f"total {total} + {SALAMI_BONUS}"
         else:
             note = f"total {total}"
         if self.match.mode == RACE:
@@ -1021,15 +1026,17 @@ class DumbalApp:
             detail = "Nobody wins this round; everyone scores their hand"
         else:
             caller_total = result.totals[caller]
+            how = "called Salami" if result.salami else "called"
             if result.caught:
-                called = (f"{who([caller])} called with {caller_total} and got caught: "
+                called = (f"{who([caller])} {how} with {caller_total} and got caught: "
                           f"{caller_total} + {CAUGHT_PENALTY} = {caller_total + CAUGHT_PENALTY}")
                 detail = f"{who(result.winners)} had the lowest hand ({result.totals[result.winners[0]]})"
                 if result.tiebreak:
                     detail += f", winning the tie on {result.tiebreak}"
             else:
-                called = f"{who([caller])} called with {caller_total}"
-                detail = "Nobody had an equal or lower hand"
+                called = f"{who([caller])} {how} with {caller_total}"
+                detail = (f"Nobody had an equal or lower hand, so everyone else adds +{SALAMI_BONUS}"
+                          if result.salami else "Nobody had an equal or lower hand")
         if self.auto_finished and match.over:
             went_out, extra = self.auto_finished
             called = (f"You were knocked out in round {went_out}. The bots played "
@@ -1082,7 +1089,9 @@ class DumbalApp:
                 color = "#c86b6b" if (out_now or out_before) else (WINNER if name in result.winners else TEXT)
                 cell("name", who([name]), color)
                 if played:
-                    cell("hand", str(result.totals[name]) + (f"+{CAUGHT_PENALTY}" if name == caller and result.caught else ""), color)
+                    extra = (f"+{CAUGHT_PENALTY}" if name == caller and result.caught
+                             else f"+{SALAMI_BONUS}" if result.salami and not result.caught and name != caller else "")
+                    cell("hand", str(result.totals[name]) + extra, color)
                     points = summary.added[name]
                     cell("round", "0" if points == 0 else f"+{points}", color)
                 cell("score", str(match.scores[name]), color)
@@ -1124,8 +1133,8 @@ class DumbalApp:
         if self.animating:
             return ""
         if game.phase == OPENING:
-            return (f"Opening call: your hand is {game.total(HUMAN)} ({OPENING_CALL_LIMIT} or less). "
-                    "Call showdown now, or Play on.")
+            return (f"Salami: your hand is {game.total(HUMAN)} ({OPENING_CALL_LIMIT} or less). Call Salami before "
+                    f"anyone throws (if you're not caught, everyone else gets +{SALAMI_BONUS}), or Play on.")
         if game.phase == PICK:
             if len(game.pickables) > 1:
                 return "Pick up: click the deck, or any one of the gold cards."

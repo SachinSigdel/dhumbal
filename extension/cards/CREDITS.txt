@@ -1,0 +1,4 @@
+Card artwork: "Vector Playing Cards" by Byron Knoll, released into the public domain.
+  http://www.byronknoll.com/  ·  https://code.google.com/archive/p/vector-playing-cards/
+SVG collection used: https://github.com/notpeter/Vector-Playing-Cards
+The SVGs were rendered to 160px-wide PNGs for this extension.

@@ -15,14 +15,16 @@ player, bots included.
   winner scores 0 and everyone else adds their hand total to the score table (a caught
   caller adds 25 on top). Reaching 100
   points knocks you out; the last player standing wins. If you are knocked out, the bots
-  finish the race at once and the winner is shown. The winner of each round starts the
-  next one; the first round's starter is random.
+  finish the race at once and the winner is shown. The player seated after each round's
+  winner starts the next round; the first round's starter is random.
 
 **A round**
 
 - Everyone gets 5 cards. A = 1, number cards are face value, J = 11, Q = 12, K = 13, joker = 0.
-- **Opening call:** before anyone throws, each player in turn (starting with the round's
-  first player) may call a showdown if their hand is 15 or less.
+- **Salami (opening call):** before anyone throws, each player in turn (starting with the
+  round's first player) may call a showdown if their hand is 15 or less. Catching works as
+  usual; a caught Salami scores like any other round, but if the caller isn't caught, every
+  other player scores their hand **plus 10**.
 - Then players take turns clockwise around the table. On your turn:
   1. **Call a showdown** (only at the start of your turn, with a total at or under the call
      limit you chose: 5, 10 or 15), or
@@ -69,21 +71,27 @@ The GUI needs tkinter. On macOS with Homebrew Python: `brew install python-tk@3.
 
 ## Chrome extension
 
-`extension/` is the same game for Chrome (a JavaScript port with the same rules, bots,
-table, animations and sounds). To install it:
+`extension/` is the game for Chrome, published as **Dhumbal**. It's a JavaScript port with the
+same rules and bots, plus a real-looking deck (Byron Knoll's public-domain card art, see
+`extension/cards/CREDITS.txt`), a navy/burgundy/gold table, animations and sounds. It opens
+as a pop-up from the toolbar (like a wallet extension). Chrome closes pop-ups when you click
+away, so the game saves itself and resumes where you left off. **Open in side panel** moves
+the game into Chrome's side panel (a tall layout), which stays open while you browse; the
+pop-up and panel share the same saved game.
+
+To install it unpacked:
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and choose the `extension` folder.
-3. Click the Dumbal icon in the toolbar (pin it from the puzzle-piece menu); the game opens
-   in its own tab.
+3. Pin the Dhumbal icon from the puzzle-piece menu and click it.
 
-It needs no permissions and works offline. Your last game settings and the sound on/off
-choice are remembered. The same files also run as a web page: serve the folder with
-`python3 -m http.server --directory extension` and open `http://localhost:8000/game.html`.
+Its only permission is `sidePanel`, and it works offline. The same files also run as a web page: serve the
+folder with `python3 -m http.server --directory extension` and open
+`http://localhost:8000/game.html` (add `?popup` for the 800x600 pop-up size, or `?panel` for the side panel).
 
-Tests (need Node): `node extension/tests/engine.test.mjs` runs the rule tests;
-`extension/tests/crosscheck.mjs` compares the JavaScript engine with the Python one on
-hands exported from Python.
+Tests (need Node): `node extension/tests/engine.test.mjs` runs the rule tests and a
+save/resume check; `extension/tests/crosscheck.mjs` compares the JavaScript engine with the
+Python one on hands exported from Python.
 
 ## Code layout
 
@@ -95,4 +103,4 @@ hands exported from Python.
 | `gui.py`    | tkinter window interface                                  |
 | `sound.py`  | Synthesised sound effects for the window                  |
 | `dumbal.py` | Launcher                                                  |
-| `extension/`| Chrome extension: `js/cards.js`, `js/game.js` (engine), `js/app.js` (table), `js/sound.js` |
+| `extension/`| Chrome extension (Dhumbal): `js/cards.js`, `js/game.js` (engine), `js/app.js` (table), `js/sound.js`, `cards/` (card art) |

@@ -3,9 +3,10 @@
 //
 // Game modes (see Match): a Quick game is one round; Race to 100 plays rounds until one player
 // is left (round winner scores 0, others add their hand, a caught caller adds 25 on top;
-// reaching 100 knocks you out). The winner of a round starts the next one.
+// reaching 100 knocks you out). The player after each round's winner starts the next round.
 //
-// A round: an opening call (before anyone throws, anyone with 15 or less may call), then
+// A round: an opening call, "Salami" (before anyone throws, anyone with 15 or less may call;
+// if not caught, everyone else scores their hand + 10), then
 // turns of: optionally call (at or under the call limit), throw a card (its double/triple/
 // quadruple or sequence goes with it, unless thrown alone; a joker can be played with it as
 // a wild card), then pick the top deck card or any one card the previous player threw
@@ -21,6 +22,7 @@ export const CALL_LIMITS = [5, 10, 15];
 export const DEFAULT_CALL_LIMIT = 5;
 export const OPENING_CALL_LIMIT = 15;
 export const CAUGHT_PENALTY = 25;
+export const SALAMI_BONUS = 10;   // an uncaught Salami (opening call) adds this to everyone else's hand
 export const BOT_OPENING_CALL = 10;
 export const MAX_TURNS = 300;
 export const HAND_SIZE = 5;
@@ -240,7 +242,7 @@ export class DumbalGame {
     const totals = Object.fromEntries(this.players.map((p) => [p, this.total(p)]));
     this.result = {
       caller: null, totals, hands: this.snapshotHands(), winners: [], caught: false,
-      points: { ...totals }, tiebreak: null, deckOut: true,
+      points: { ...totals }, tiebreak: null, deckOut: true, salami: false,
     };
   }
 
@@ -251,6 +253,7 @@ export class DumbalGame {
     if (this.total(name) > this.limitNow()) {
       throw new GameError(`Not eligible: your total must be ${this.limitNow()} or less.`);
     }
+    const salami = this.phase === OPENING;   // called before anyone threw
     const totals = Object.fromEntries(this.players.map((p) => [p, this.total(p)]));
     const catchers = this.players.filter((p) => p !== name && totals[p] <= totals[name]);
     let tiebreak = null, winners;
@@ -273,11 +276,14 @@ export class DumbalGame {
     }
     const points = {};
     for (const p of this.players) {
-      points[p] = winners.includes(p) ? 0 : p === name ? totals[p] + CAUGHT_PENALTY : totals[p];
+      if (winners.includes(p)) points[p] = 0;
+      else if (p === name) points[p] = totals[p] + CAUGHT_PENALTY;
+      else if (salami && !catchers.length) points[p] = totals[p] + SALAMI_BONUS;   // an uncaught Salami
+      else points[p] = totals[p];
     }
     this.result = {
       caller: name, totals, hands: this.snapshotHands(), winners, caught: catchers.length > 0,
-      points, tiebreak, deckOut: false,
+      points, tiebreak, deckOut: false, salami,
     };
     return this.result;
   }
@@ -384,10 +390,11 @@ export class Match {
       const best = Math.min(...knocked.map((p) => this.scores[p]));
       this.finished = true;
       this.winners = knocked.filter((p) => this.scores[p] === best);
-    } else if (result.winners.length && active.includes(result.winners[0])) {
-      this.starter = result.winners[0];
     } else {
-      const i = this.seats.indexOf(this.starter);
+      // the player after the round winner starts the next round (skipping anyone who is out);
+      // with no winner (deck ran out), the player after this round's starter does
+      const anchor = result.winners.length ? result.winners[0] : this.starter;
+      const i = this.seats.indexOf(anchor);
       for (let step = 1; step <= this.seats.length; step++) {
         const candidate = this.seats[(i + step) % this.seats.length];
         if (!this.out.includes(candidate)) { this.starter = candidate; break; }
@@ -395,4 +402,46 @@ export class Match {
     }
     return summary;
   }
+}
+
+// ----- saving and restoring a match (the popup is destroyed whenever it closes) -----
+export const SAVE_VERSION = 1;
+
+/** A plain-JSON snapshot of a match, including the round in progress and the random state. */
+export function saveMatch(m) {
+  const g = m.game;
+  return {
+    v: SAVE_VERSION,
+    mode: m.mode, jokers: m.jokers, callLimit: m.callLimit, rng: m.rng.state,
+    seats: m.seats, scores: m.scores, out: m.out, rounds: m.rounds, starter: m.starter,
+    finished: m.finished, winners: m.winners, scored: !!g && m.scoredGame === g,
+    game: g && {
+      numPlayers: g.numPlayers, jokers: g.jokers, callLimit: g.callLimit, players: g.players,
+      deck: g.deck, floor: g.floor, hands: g.hands, lastThrow: g.lastThrow, first: g.first,
+      current: g.current, pickables: g.pickables, floorUnlocked: [...g.floorUnlocked],
+      reshuffles: g.reshuffles, turns: g.turns, result: g.result, phase: g.phase,
+      openingOffered: g.openingOffered,
+    },
+  };
+}
+
+/** Rebuild a match saved with saveMatch (null if the snapshot is unusable). */
+export function loadMatch(data) {
+  if (!data || data.v !== SAVE_VERSION) return null;
+  const copy = JSON.parse(JSON.stringify(data));
+  const rng = new Rng(0);
+  rng.state = copy.rng >>> 0;
+  const m = Object.create(Match.prototype);
+  Object.assign(m, {
+    mode: copy.mode, jokers: copy.jokers, callLimit: copy.callLimit, rng, seats: copy.seats,
+    scores: copy.scores, out: copy.out, rounds: copy.rounds, starter: copy.starter,
+    finished: copy.finished, winners: copy.winners, game: null, scoredGame: null,
+  });
+  if (copy.game) {
+    const g = Object.create(DumbalGame.prototype);
+    Object.assign(g, copy.game, { rng, floorUnlocked: new Set(copy.game.floorUnlocked) });
+    m.game = g;
+    if (copy.scored) m.scoredGame = g;
+  }
+  return m;
 }

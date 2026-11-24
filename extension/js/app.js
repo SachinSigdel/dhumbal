@@ -7,33 +7,52 @@ import {
 } from './cards.js';
 import {
   CALL_LIMITS, CAUGHT_PENALTY, DEFAULT_CALL_LIMIT, HUMAN, MAX_PLAYERS, MIN_PLAYERS, Match, OPENING,
-  OPENING_CALL_LIMIT, PICK, QUICK, RACE, RACE_LIMIT, THROW,
+  OPENING_CALL_LIMIT, PICK, QUICK, RACE, RACE_LIMIT, SALAMI_BONUS, THROW, loadMatch, saveMatch,
 } from './game.js';
 import { Sounds } from './sound.js';
 
 // ---------- layout (same numbers as the Python window) ----------
-const W = 1040, H = 770;
-const CX = W / 2, CY = 318, RX = 430, RY = 220;
-const HAND_Y = 634, TOAST_Y = CY - 74, BAR_Y = 744;
+// Two layouts: a wide table (tab and toolbar popup) and a tall one for Chrome's narrow side panel.
+let W, H, CX, CY, RX, RY, HAND_Y, TOAST_Y, BAR_Y, DECK_Y, PORTRAIT = false;
+function applyLayout(portrait) {
+  PORTRAIT = portrait;
+  if (portrait) {
+    W = 480; H = 970; CX = 240; CY = 380; RX = 196; RY = 290; HAND_Y = 812; BAR_Y = 940;
+  } else {
+    W = 1040; H = 770; CX = 520; CY = 318; RX = 430; RY = 220; HAND_Y = 634; BAR_Y = 744;
+  }
+  // the narrow table is crowded in the middle: deck row a little higher, message just above it
+  DECK_Y = portrait ? CY - 40 : CY;
+  TOAST_Y = portrait ? DECK_Y - 54 : CY - 74;
+}
+applyLayout(false);
+const MODE = new URLSearchParams(location.search).has('panel') ? 'panel'
+  : new URLSearchParams(location.search).has('popup') ? 'popup' : 'tab';
 
-const BG_TOP = '#0d2418', BG_BOTTOM = '#050f09';
-const FELT_EDGE = '#145a2f', FELT_CENTER = '#2e8a4f', FELT_LINE = '#3c9a5c';
-const RIM_DARK = '#2e1a0c', RIM = '#5e3a1d', RIM_LIGHT = '#8a5a30', INLAY = '#c9a24a';
-const CARD_BG = '#fffdf6', CARD_EDGE = '#9a968a';
-const BACK = '#8c1f30', BACK_DARK = '#5e1220';
-const GOLD = '#ffd34d', WINNER = '#f2c14e';
-const RED = '#c62828', BLACK = '#1b1b1b', JOKER = '#6a1b9a';
-const TEXT = '#f4f1e6', MUTED = '#9fc2ab', PANEL = '#0c1f14', OUT_RED = '#c86b6b';
-const AVATAR_COLORS = ['#e57373', '#64b5f6', '#81c784', '#ba68c8'];
+// Palette: royal navy felt, burgundy (mahogany) rim and card backs, antique gold, ivory.
+// Navy + gold is the classic court-card pairing; burgundy and ivory warm it up.
+const BG_TOP = '#0e1a2b', BG_BOTTOM = '#060b14';
+const FELT_EDGE = '#0f2a47', FELT_CENTER = '#1f4f7a', FELT_LINE = '#3a6a96';
+const RIM_DARK = '#2a0f14', RIM = '#5a1a26', RIM_LIGHT = '#8a3242', INLAY = '#d4af37';
+const CARD_BG = '#fffdf6', CARD_EDGE = '#9aa3ad';
+const BACK = '#7a1f2e', BACK_DARK = '#4d0f1a';
+const GOLD = '#e9c46a', WINNER = '#f4d35e';
+const RED = '#c0392b', BLACK = '#1b1b1b', JOKER = '#6a1b9a';
+const TEXT = '#f5efe0', MUTED = '#a9b8cc', PANEL = '#0b1626', OUT_RED = '#e07a7a';
+const PILL = '#1c3350', AVATAR_INK = '#0e1a2b';
+const AVATAR_COLORS = ['#e07a5f', '#81b29a', '#f2cc8f', '#9d8df1'];
 
-const BIG = [72, 104], MID = [52, 76], SMALL = [30, 44];
+const U = 1.15;                  // how big things are drawn (1 = the original size)
+const u = (n) => n * U;
+const BIG = [u(72), u(104)], MID = [u(52), u(76)], SMALL = [u(30), u(44)];
 
 const SHUFFLE_MS = 1800, DEAL_MS = 420, DEAL_GAP_MS = 120, MOVE_MS = 560, MOVE_GAP_MS = 110;
-const BOT_THINK_MS = 800, TOAST_MS = 2000, TOAST_FADE_MS = 350;
+const BOT_THINK_MS = 800, TOAST_MS = 2000, TOAST_FADE_MS = 650, FADE_IN_MS = 180;
+const STATUS_MS = 4500;          // the instruction line fades away after this long unchanged
 
 const FONT = '"Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif';
 const CARD_FONT = 'Helvetica, Arial, sans-serif';
-const font = (size, bold = false, family = FONT) => `${bold ? 'bold ' : ''}${size}px ${family}`;
+const font = (size, bold = false, family = FONT) => `${bold ? 'bold ' : ''}${u(size)}px ${family}`;
 
 // ---------- small helpers ----------
 function mix(c1, c2, t) {
@@ -47,6 +66,25 @@ const wins = (names) => who(names) + (names.length === 1 && names[0] !== HUMAN ?
 function describe(cards) {
   const stands = jokerStandsFor(cards);
   return cards.map((c) => cardText(c) + (stands[c] ? ` (as ${stands[c]})` : '')).join('  ');
+}
+
+// card artwork: Byron Knoll's public-domain Vector Playing Cards (see cards/CREDITS.txt)
+const SUIT_CODE = { '♦': 'D', '♥': 'H', '♣': 'C', '♠': 'S' };
+const cardFile = (card) => (isJoker(card) ? (card === 'JK1' ? 'Joker1' : 'Joker2') : card.slice(0, -1) + SUIT_CODE[card.slice(-1)]);
+
+function loadCardImages(onLoad) {
+  const images = {};
+  for (const s of Object.keys(SUIT_CODE)) {
+    for (const r of ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']) images[r + s] = null;
+  }
+  images.JK1 = images.JK2 = null;
+  for (const card of Object.keys(images)) {
+    const img = new Image();
+    img.onload = onLoad;
+    img.src = `cards/${cardFile(card)}.png`;
+    images[card] = img;
+  }
+  return images;
 }
 
 const store = {
@@ -81,7 +119,10 @@ class App {
     this.mouse = { x: -1, y: -1 };
     this.regions = [];
     this.frameQueued = false;
-    this.background = this.paintBackground();
+    this.background = null;          // painted by fit() for the current layout
+    this.cardImages = loadCardImages(() => this.requestRender());
+    this.lastStatus = '';
+    this.statusAt = 0;
 
     this.fit();
     window.addEventListener('resize', () => this.fit());
@@ -93,13 +134,51 @@ class App {
       if (e.key.toLowerCase() === 'm' && !document.querySelector('#setup:not([hidden])')) this.toggleSound();
     });
     this.setup = new SetupDialog(this);
+    window.addEventListener('pagehide', () => this.save());
+    // the popup and the side panel share one saved game: when the other view saves, follow it
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'dumbal.game' && e.newValue && !this.animating && !this.flight) {
+        clearTimeout(this.pendingBot); this.pendingBot = null;
+        this.token += 1;
+        if (this.resume(true)) this.requestRender();
+      }
+    });
+    this.windowId = null;
+    globalThis.chrome?.windows?.getCurrent?.().then((w) => { this.windowId = w.id; }).catch(() => {});
+    if (!this.resume()) this.setup.open();
     this.requestRender();
-    this.setup.open();
+  }
+
+  // ---------- save and resume: the toolbar popup is destroyed whenever it closes ----------
+  save() {
+    if (!this.match) return;
+    store.set('game', { match: saveMatch(this.match), autoFinished: this.autoFinished });
+  }
+
+  resume(quiet = false) {
+    const saved = store.get('game', null);
+    const match = saved && loadMatch(saved.match);
+    if (!match || !match.game) return false;
+    this.match = match;
+    this.game = match.game;
+    this.autoFinished = saved.autoFinished ?? null;
+    if (this.game.over) {
+      if (this.match.scoredGame !== this.game) this.match.finishRound();
+    } else {
+      if (!quiet) this.toast('Welcome back: your game is where you left it');
+      this.scheduleBots();
+    }
+    return true;
   }
 
   // ---------- canvas sizing and input ----------
   fit() {
     const dpr = window.devicePixelRatio || 1;
+    const portrait = window.innerWidth / window.innerHeight < 0.8;   // a tall, narrow window (side panel)
+    if (portrait !== PORTRAIT || !this.background) {
+      applyLayout(portrait);
+      this.background = this.paintBackground();
+    }
     this.scale = Math.min(window.innerWidth / W, window.innerHeight / H);
     this.canvas.style.width = `${W * this.scale}px`;
     this.canvas.style.height = `${H * this.scale}px`;
@@ -131,6 +210,20 @@ class App {
   }
 
   region(x1, y1, x2, y2, handlers) { this.regions.push({ x1, y1, x2, y2, ...handlers }); }
+
+  /** From the popup: move the game into Chrome's side panel, which stays open while you browse. */
+  openSidePanel() {
+    const sidePanel = globalThis.chrome?.sidePanel;
+    if (!sidePanel?.open || this.windowId === null) {
+      this.toast("This browser doesn't support opening the side panel");
+      this.sfx('nope');
+      return;
+    }
+    this.save();
+    sidePanel.open({ windowId: this.windowId })      // must run inside the click
+      .then(() => window.close())
+      .catch(() => this.toast("Couldn't open the side panel"));
+  }
 
   // ---------- sound ----------
   sfx(name) { this.sounds.play(name); }
@@ -170,10 +263,11 @@ class App {
   afterDeal() {
     this.hidden = new Set();
     this.dealing = false;
+    this.save();
     const game = this.game;
     const first = who([game.players[game.first]]);
     if (game.phase === OPENING && game.currentPlayer === HUMAN) {
-      this.toast(`Your hand is ${game.total(HUMAN)}: you may call before anyone throws`);
+      this.toast(`Your hand is ${game.total(HUMAN)}: you may call Salami before anyone throws`);
     } else {
       this.toast(`${first} ${first === 'You' ? 'start' : 'starts'}`);
     }
@@ -195,6 +289,7 @@ class App {
       this.autoFinished = [wentOut, summary.number - wentOut];
     }
     this.toast('');
+    this.save();
     this.requestRender();
     this.sfx('call');
     if (summary.caught) this.later(380, () => this.sfx('caught'));
@@ -215,26 +310,33 @@ class App {
     let [x, y] = this.seatPoint(index);
     x += (x - CX) * 0.03;
     y += (y - CY) * 0.12;
-    return [Math.min(Math.max(x, 105), W - 105), y];
+    const edge = PORTRAIT ? 80 : 105;
+    return [Math.min(Math.max(x, edge), W - edge), y];
   }
   botCardPos(index, k, n, revealed = false) {
     const [x, y] = this.botSeat(index);
-    const step = revealed ? 26 : 16;
+    const step = u(revealed ? 26 : 16);
     return [x - (step * (n - 1)) / 2 + k * step, y];
   }
   discardSpot(index) {
-    const [, seatY] = this.seatPoint(index);
+    const [seatX, seatY] = this.seatPoint(index);
+    if (PORTRAIT && index !== 0 && Math.abs(seatX - CX) > RX * 0.7) {
+      // narrow table: a side seat's thrown cards sit right beside its hand, clear of the deck and floor
+      const [bx, by] = this.botSeat(index);
+      return [bx + (bx < CX ? 1 : -1) * u(84), by];
+    }
+    if (PORTRAIT && index === 0) return this.seatPoint(0, 0.75);     // your throws sit lower on the tall table
     return this.seatPoint(index, seatY < CY - 1 ? 0.72 : 0.55);
   }
   discardPos(index, k, n) {
     const [x, y] = this.discardSpot(index);
-    return [x - (24 * (n - 1)) / 2 + k * 24, y];
+    return [x - (u(24) * (n - 1)) / 2 + k * u(24), y];
   }
   handPos(k, n) {
     const step = BIG[0] + 12;
     return [CX - (step * (n - 1)) / 2 + k * step, HAND_Y];
   }
-  deckPos() { return [CX - 50, CY]; }
+  deckPos() { return [CX - u(44), DECK_Y]; }
   cardPos(name, k, n) { return name === HUMAN ? this.handPos(k, n) : this.botCardPos(this.seatOf(name), k, n); }
   seatOf(name) { return this.match.seats.indexOf(name); }
   shownThrow(name) { return this.game.lastThrow[name].filter((c) => this.game.floor.includes(c)); }
@@ -303,11 +405,13 @@ class App {
     this.toastAt = performance.now();
     this.requestRender();
   }
-  toastAlpha(now) {
-    if (!this.toastMsg) return 0;
-    const age = now - this.toastAt;
-    if (age < TOAST_MS) return 1;
-    return Math.max(0, 1 - (age - TOAST_MS) / TOAST_FADE_MS);
+  /** Opacity and upward drift of a message shown at `since`: fades in, holds, then floats up and fades. */
+  fadeState(now, since, hold) {
+    const age = now - since;
+    if (age < FADE_IN_MS) return { alpha: ease(age / FADE_IN_MS), lift: 0 };
+    if (age < hold) return { alpha: 1, lift: 0 };
+    const p = Math.min(1, (age - hold) / TOAST_FADE_MS);
+    return { alpha: 1 - ease(p), lift: u(10) * ease(p) };
   }
 
   // ---------- turn flow ----------
@@ -333,6 +437,7 @@ class App {
     const hand = this.game.hands[HUMAN];
     const before = Object.fromEntries(hand.map((c, k) => [c, this.handPos(k, hand.length)]));
     const thrown = this.game.throw(HUMAN, card, { alone, joker });
+    this.save();
     this.flyThrow(HUMAN, thrown, before, () => this.requestRender());
   }
 
@@ -397,6 +502,7 @@ class App {
 
   scheduleBots() {
     const g = this.game;
+    this.save();
     this.requestRender();
     if (g && !g.over && g.currentPlayer !== HUMAN) {
       this.pendingBot = this.later(this.botDelayMs, () => this.botStep());
@@ -437,7 +543,8 @@ class App {
       this.frameQueued = false;
       this.tick(now);
       this.render(now);
-      const fading = this.toastMsg && now - this.toastAt < TOAST_MS + TOAST_FADE_MS;
+      const fading = (this.toastMsg && now - this.toastAt < TOAST_MS + TOAST_FADE_MS)
+        || (this.lastStatus && now - this.statusAt < STATUS_MS + TOAST_FADE_MS);
       if (this.flight || this.shuffleAnim || fading) this.requestRender();
     });
   }
@@ -452,7 +559,7 @@ class App {
     bg.addColorStop(0, BG_TOP); bg.addColorStop(1, BG_BOTTOM);
     c.fillStyle = bg; c.fillRect(0, 0, W, H);
     const oval = (x1, y1, x2, y2) => { c.beginPath(); c.ellipse((x1 + x2) / 2, (y1 + y2) / 2, (x2 - x1) / 2, (y2 - y1) / 2, 0, 0, Math.PI * 2); };
-    oval(CX - RX - 40, CY - RY - 28, CX + RX + 46, CY + RY + 52); c.fillStyle = '#030a06'; c.fill();
+    oval(CX - RX - 40, CY - RY - 28, CX + RX + 46, CY + RY + 52); c.fillStyle = '#03070d'; c.fill();
     oval(CX - RX - 38, CY - RY - 38, CX + RX + 38, CY + RY + 38); c.fillStyle = RIM_DARK; c.fill();
     oval(CX - RX - 34, CY - RY - 34, CX + RX + 34, CY + RY + 34); c.fillStyle = RIM; c.fill();
     c.strokeStyle = RIM_LIGHT; c.lineWidth = 2; c.stroke();
@@ -470,7 +577,7 @@ class App {
     c.setLineDash([]);
     c.font = font(15, true); c.textAlign = 'center'; c.textBaseline = 'middle';
     c.fillStyle = mix(FELT_CENTER, '#ffffff', 0.12);
-    c.fillText('D U M B A L', CX, CY - 56);
+    if (!PORTRAIT) c.fillText('D H U M B A L', CX, CY - 56);   // no room on the narrow table
     return off;
   }
 
@@ -499,7 +606,7 @@ class App {
     const [w, h] = size;
     const x1 = x - w / 2, y1 = y - h / 2, x2 = x + w / 2, y2 = y + h / 2;
     const r = w > 40 ? 7 : 5;
-    this.rrect(x1 + 2, y1 + 4, x2 + 3, y2 + 4, r); c.fillStyle = '#06110a'; c.fill();
+    this.rrect(x1 + 2, y1 + 4, x2 + 3, y2 + 4, r); c.fillStyle = 'rgba(2, 6, 12, 0.55)'; c.fill();
     if (card === null) {
       this.rrect(x1, y1, x2, y2, r); c.fillStyle = BACK; c.fill(); c.strokeStyle = BACK_DARK; c.lineWidth = 1; c.stroke();
       const inset = w < 40 ? 3 : 5;
@@ -511,6 +618,17 @@ class App {
         diamond(dw, dh); c.fillStyle = BACK; c.fill(); c.strokeStyle = INLAY; c.stroke();
         diamond(dw / 2.4, dh / 2.4); c.fillStyle = INLAY; c.fill();
       }
+      return;
+    }
+    const img = this.cardImages[card];
+    if (img && img.complete && img.naturalWidth) {
+      // the real card face, clipped to our rounded corners
+      c.save(); this.rrect(x1, y1, x2, y2, r); c.clip();
+      c.fillStyle = CARD_BG; c.fillRect(x1, y1, w, h);
+      c.drawImage(img, x1, y1, w, h);
+      if (fill !== CARD_BG) { c.fillStyle = 'rgba(233, 196, 106, 0.32)'; c.fillRect(x1, y1, w, h); }
+      c.restore();
+      this.rrect(x1, y1, x2, y2, r); c.strokeStyle = outline; c.lineWidth = width; c.stroke();
       return;
     }
     this.rrect(x1, y1, x2, y2, r); c.fillStyle = fill; c.fill(); c.strokeStyle = outline; c.lineWidth = width; c.stroke();
@@ -526,6 +644,7 @@ class App {
   }
 
   drawAvatar(x, y, initials, color, active, winner, r = 20) {
+    r = u(r);
     const c = this.ctx;
     if (active || winner) {
       const glow = winner ? WINNER : GOLD;
@@ -534,21 +653,21 @@ class App {
       }
     }
     c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fillStyle = color; c.fill();
-    c.strokeStyle = active || winner ? GOLD : '#0b1a10'; c.lineWidth = active || winner ? 3 : 2; c.stroke();
-    this.text(initials, x, y, { size: 12, bold: true, color: '#10261a' });
+    c.strokeStyle = active || winner ? GOLD : '#08111d'; c.lineWidth = active || winner ? 3 : 2; c.stroke();
+    this.text(initials, x, y, { size: 12, bold: true, color: AVATAR_INK });
   }
 
   /** A pill button; returns its width. anchor: 'left' | 'right' | 'center'. */
   drawButton(label, x, y, { primary = false, enabled = true, anchor = 'left', onClick }) {
     const c = this.ctx;
     c.font = font(13, true);
-    const w = c.measureText(label).width + 32, h = 34;
+    const w = c.measureText(label).width + u(28), h = u(32);
     const x1 = anchor === 'left' ? x : anchor === 'right' ? x - w : x - w / 2;
     const hover = enabled && this.mouse.x >= x1 && this.mouse.x <= x1 + w && Math.abs(this.mouse.y - y) <= h / 2;
-    let bg = primary ? GOLD : '#1d3a29';
-    if (!enabled) bg = '#14281c'; else if (hover) bg = mix(bg, '#ffffff', 0.18);
-    this.rrect(x1, y - h / 2, x1 + w, y + h / 2, 17); c.fillStyle = bg; c.fill();
-    this.text(label, x1 + w / 2, y + 1, { size: 13, bold: true, color: !enabled ? '#6d8a77' : primary ? BLACK : TEXT });
+    let bg = primary ? GOLD : PILL;
+    if (!enabled) bg = '#13233a'; else if (hover) bg = mix(bg, '#ffffff', 0.18);
+    this.rrect(x1, y - h / 2, x1 + w, y + h / 2, h / 2); c.fillStyle = bg; c.fill();
+    this.text(label, x1 + w / 2, y + 1, { size: 13, bold: true, color: !enabled ? '#5d718a' : primary ? BLACK : TEXT });
     if (enabled) this.region(x1, y - h / 2, x1 + w, y + h / 2, { click: onClick, cursor: 'pointer' });
     return w;
   }
@@ -561,6 +680,9 @@ class App {
     const game = this.game;
     this.hint = '';
     if (game) this.drawGame(now);
+    if (MODE === 'popup') {
+      this.drawButton('⇥ Open in side panel', W - 16, u(22), { anchor: 'right', onClick: () => { this.sfx('click'); this.openSidePanel(); } });
+    }
     this.drawToast(now);
     this.drawBar();
     const r = this.regionAt(this.mouse);
@@ -573,24 +695,25 @@ class App {
     const offers = canPick ? game.pickables : this.myTurn(THROW) ? game.availablePicks() : [];
 
     const mode = this.match.mode === QUICK ? 'Quick game' : `Race to ${RACE_LIMIT}`;
-    this.text(`${mode}  ·  ${this.match.seats.length} players  ·  ${game.jokers} joker${game.jokers > 1 ? 's' : ''} (0 pts)  ·  call at ${game.callLimit} or less (opening call ${OPENING_CALL_LIMIT})`,
-      22, 22, { size: 12, color: MUTED, align: 'left' });
+    const info = `${mode}  ·  ${this.match.seats.length} players  ·  ${game.jokers} joker${game.jokers > 1 ? 's' : ''} (0 pts)  ·  call at ${game.callLimit} or less (Salami ${OPENING_CALL_LIMIT})`;
+    this.wrap(info, PORTRAIT ? W - 40 : 640, font(12)).forEach((ln, i) =>
+      this.text(ln, 22, u(20) + i * u(16), { size: 12, color: MUTED, align: 'left' }));
 
     // centre: deck and floor
-    const [dx, dy] = this.deckPos(), fx = CX + 50;
+    const [dx, dy] = this.deckPos(), fx = CX + u(44), hw = MID[0] / 2, hh = MID[1] / 2;
     if (!this.shuffling && game.deck.length) {
       for (let k = Math.min(4, Math.max(Math.floor(game.deck.length / 10), 1)); k > 0; k--) this.drawCard(dx + k * 1.2, dy - k * 1.6, null, MID);
       this.drawCard(dx, dy, null, MID);
     }
     if (canPick) {
-      this.rrect(dx - 31, dy - 43, dx + 31, dy + 43, 9); c.strokeStyle = GOLD; c.lineWidth = 3; c.stroke();
-      this.region(dx - 31, dy - 43, dx + 31, dy + 43, { click: () => this.onPick(false), cursor: 'pointer' });
+      this.rrect(dx - hw - 5, dy - hh - 5, dx + hw + 5, dy + hh + 5, 9); c.strokeStyle = GOLD; c.lineWidth = 3; c.stroke();
+      this.region(dx - hw - 5, dy - hh - 5, dx + hw + 5, dy + hh + 5, { click: () => this.onPick(false), cursor: 'pointer' });
     }
-    this.text(`Deck ${game.deck.length}`, dx, dy + 54, { size: 11, color: MUTED });
+    this.text(`Deck ${game.deck.length}`, dx, dy + hh + u(14), { size: 11, color: MUTED });
     const visibleFloor = game.floor.filter((card) => !this.hidden.has(card));
-    if (visibleFloor.length) this.drawCard(fx, CY, visibleFloor[visibleFloor.length - 1], MID);
-    else { this.rrect(fx - 26, CY - 38, fx + 26, CY + 38, 7); c.strokeStyle = FELT_LINE; c.lineWidth = 2; c.stroke(); }
-    this.text(`Floor ${game.floor.length}`, fx, CY + 54, { size: 11, color: MUTED });
+    if (visibleFloor.length) this.drawCard(fx, dy, visibleFloor[visibleFloor.length - 1], MID);
+    else { this.rrect(fx - hw, dy - hh, fx + hw, dy + hh, 7); c.strokeStyle = FELT_LINE; c.lineWidth = 2; c.stroke(); }
+    this.text(`Floor ${game.floor.length}`, fx, dy + hh + u(14), { size: 11, color: MUTED });
 
     // each player's last throw, between their seat and the centre
     for (const name of result ? [] : game.players) {
@@ -598,7 +721,7 @@ class App {
       thrown.forEach((card, k) => {
         if (this.hidden.has(card)) return;
         const [x, y] = this.discardPos(i, k, thrown.length);
-        if (stands[card]) this.text(`as ${stands[card]}`, x, y + 48, { size: 10, bold: true, color: GOLD });
+        if (stands[card]) this.text(`as ${stands[card]}`, x, y + MID[1] / 2 + u(10), { size: 10, bold: true, color: GOLD });
         const isOffer = offers.includes(card);
         this.drawCard(x, y, card, MID, {
           fill: isOffer && canPick ? GOLD : CARD_BG, outline: isOffer ? GOLD : CARD_EDGE, width: isOffer ? 3 : 1,
@@ -610,9 +733,10 @@ class App {
       });
       if (thrown.some((card) => offers.includes(card))) {
         const [tx, ty] = this.discardSpot(i);
-        const label = canPick ? (offers.length > 1 ? 'pick any one of these' : 'you can pick this')
+        const label = PORTRAIT ? (canPick ? 'pick one' : game.floorUnlocked.has(HUMAN) ? 'available' : 'locked')
+          : canPick ? (offers.length > 1 ? 'pick any one of these' : 'you can pick this')
           : game.floorUnlocked.has(HUMAN) ? 'available to pick' : 'pickable once you throw|a double or sequence';
-        label.split('|').forEach((ln, j, all) => this.text(ln, tx, ty - 52 - (all.length - 1 - j) * 14, { size: 11, bold: true, color: GOLD }));
+        label.split('|').forEach((ln, j, all) => this.text(ln, tx, ty - MID[1] / 2 - u(14) - (all.length - 1 - j) * u(14), { size: 11, bold: true, color: GOLD }));
       }
     }
 
@@ -665,19 +789,21 @@ class App {
     const color = AVATAR_COLORS[(index - 1) % AVATAR_COLORS.length];
     if (y < 140) {
       const half = ((result ? 26 : 16) * (hand.length - 1)) / 2 + size[0] / 2;
-      this.drawAvatar(x - half - 30, y, 'B' + name.slice(-1), color, isTurn, isWinner);
+      this.drawAvatar(x - half - u(30), y, 'B' + name.slice(-1), color, isTurn, isWinner);
     } else {
-      this.drawAvatar(x, y - (result ? 62 : 46), 'B' + name.slice(-1), color, isTurn, isWinner);
+      this.drawAvatar(x, y - u(result ? 62 : 46), 'B' + name.slice(-1), color, isTurn, isWinner);
     }
-    const below = y + (result ? 46 : 32);
+    const below = y + u(result ? 46 : 32);
     this.text(name + (result && result.caller === name ? '  · called' : ''), x, below, { size: 13, bold: true, color: isTurn || isWinner ? GOLD : TEXT });
-    if (result) this.text(this.resultNote(name), x, below + 18, { size: 12 });
-    else if (isTurn) this.text('thinking…', x, below + 17, { size: 11, color: MUTED });
+    if (result) this.text(this.resultNote(name), x, below + u(18), { size: 12 });
+    else if (isTurn) this.text('thinking…', x, below + u(17), { size: 11, color: MUTED });
   }
 
   resultNote(name) {
     const result = this.game.result, total = result.totals[name];
-    let note = name === result.caller && result.caught ? `total ${total} + ${CAUGHT_PENALTY}` : `total ${total}`;
+    const salamiBonus = result.salami && !result.caught && name !== result.caller;
+    let note = name === result.caller && result.caught ? `total ${total} + ${CAUGHT_PENALTY}`
+      : salamiBonus ? `total ${total} + ${SALAMI_BONUS}` : `total ${total}`;
     if (this.match.mode === RACE) {
       const points = result.points[name];
       note += points === 0 ? '  ·  scores 0' : `  ·  +${points}`;
@@ -687,17 +813,24 @@ class App {
 
   drawOutSeat(index, name) {
     const [x, y] = this.botSeat(index);
-    this.drawAvatar(x, y - 46, 'B' + name.slice(-1), '#4a5a50', false, false);
-    this.text('OUT', x, y - 6, { size: 14, bold: true, color: OUT_RED });
-    this.text(`${name}  ·  ${this.match.scores[name]}`, x, y + 32, { size: 12, bold: true, color: MUTED });
+    this.drawAvatar(x, y - u(46), 'B' + name.slice(-1), '#4a5668', false, false);
+    this.text('OUT', x, y - u(6), { size: 14, bold: true, color: OUT_RED });
+    this.text(`${name}  ·  ${this.match.scores[name]}`, x, y + u(32), { size: 12, bold: true, color: MUTED });
   }
 
   drawHuman() {
     const game = this.game, result = game.result;
+    if (PORTRAIT && !game.players.includes(HUMAN)) {
+      this.drawAvatar(36, HAND_Y - 92, 'You', '#4a5668', false, false, 18);
+      this.text(`OUT  ·  ${this.match.scores[HUMAN]}`, 66, HAND_Y - 92, { size: 13, bold: true, color: OUT_RED, align: 'left' });
+      this.text(this.match.over ? 'You were knocked out of the race.' : "You're out. Watching the bots…",
+        CX, HAND_Y, { size: 14, bold: true, color: MUTED });
+      return;
+    }
     if (!game.players.includes(HUMAN)) {
       const lx = CX - 290;
-      this.drawAvatar(lx, HAND_Y - 26, 'You', '#4a5a50', false, false, 24);
-      this.text(`OUT  ·  ${this.match.scores[HUMAN]}`, lx, HAND_Y + 14, { size: 13, bold: true, color: OUT_RED });
+      this.drawAvatar(lx, HAND_Y - u(26), 'You', '#4a5668', false, false, 24);
+      this.text(`OUT  ·  ${this.match.scores[HUMAN]}`, lx, HAND_Y + u(14), { size: 13, bold: true, color: OUT_RED });
       this.text(this.match.over ? 'You were knocked out of the race.' : "You're out of the race. Watching the bots…",
         CX + 40, HAND_Y, { size: 15, bold: true, color: MUTED });
       return;
@@ -733,16 +866,27 @@ class App {
       if (joker && !isJoker(hovered)) parts.push(`shift-click: ${describe(orderThrow(jokerGroup(hand, hovered, joker)))}`);
       if (group.length > 1) parts.push(`right-click: ${cardText(hovered)} alone`);
       else if (parts.length) parts.unshift(`click: ${cardText(hovered)}`);
-      if (parts.length) this.text(parts.join('   ·   '), CX, HAND_Y - BIG[1] / 2 - 36, { size: 12, bold: true, color: GOLD });
+      if (parts.length) this.text(parts.join('   ·   '), CX, HAND_Y - BIG[1] / 2 - (PORTRAIT ? u(12) : u(30)), { size: 12, bold: true, color: GOLD });
     }
 
     const isTurn = !result && !this.dealing && game.currentPlayer === HUMAN;
     const isWinner = !!(result && result.winners.includes(HUMAN));
+    if (PORTRAIT) {
+      const y = HAND_Y - 92;
+      this.drawAvatar(36, y, 'You', isTurn ? GOLD : '#d8cfb8', isTurn, isWinner, 18);
+      const total = hand.filter((card) => !this.hidden.has(card)).reduce((s2, card) => s2 + cardValue(card), 0);
+      this.text(result ? this.resultNote(HUMAN) : `total ${total}`, 66, y, { size: 13, bold: true, color: total <= game.limitNow() ? GOLD : TEXT, align: 'left' });
+      const bits = [];
+      if (this.match.mode === RACE) bits.push(`score ${this.match.scores[HUMAN]}/${RACE_LIMIT}`);
+      if (!result) bits.push(game.floorUnlocked.has(HUMAN) ? 'floor pick unlocked' : 'floor pick locked');
+      if (bits.length) this.text(bits.join('  ·  '), W - 16, y, { size: 11, color: game.floorUnlocked.has(HUMAN) && !result ? GOLD : MUTED, align: 'right' });
+      return;
+    }
     const [firstX] = this.handPos(0, Math.max(hand.length, 1));
-    const lx = Math.min(firstX - BIG[0] / 2 - 80, CX - 290);
-    this.drawAvatar(lx, HAND_Y - 38, 'You', isTurn ? GOLD : '#d9cfa8', isTurn, isWinner, 24);
+    const lx = Math.min(firstX - BIG[0] / 2 - u(70), CX - 300);
+    this.drawAvatar(lx, HAND_Y - u(38), 'You', isTurn ? GOLD : '#d8cfb8', isTurn, isWinner, 24);
     const total = hand.filter((card) => !this.hidden.has(card)).reduce((s, card) => s + cardValue(card), 0);
-    this.text(result ? this.resultNote(HUMAN) : `total ${total}`, lx, HAND_Y + 2,
+    this.text(result ? this.resultNote(HUMAN) : `total ${total}`, lx, HAND_Y + u(2),
       { size: 13, bold: true, color: total <= game.limitNow() ? GOLD : TEXT });
     const lines = [];
     if (this.match.mode === RACE) lines.push([`score ${this.match.scores[HUMAN]} / ${RACE_LIMIT}`, MUTED]);
@@ -750,7 +894,7 @@ class App {
       const unlocked = game.floorUnlocked.has(HUMAN);
       lines.push([unlocked ? 'floor pick unlocked' : 'floor pick locked', unlocked ? GOLD : MUTED]);
     }
-    lines.forEach(([s, color], k) => this.text(s, lx, HAND_Y + 20 + 17 * k, { size: 11, color }));
+    lines.forEach(([s, color], k) => this.text(s, lx, HAND_Y + u(20) + u(16) * k, { size: 11, color }));
   }
 
   drawResult() {
@@ -761,14 +905,15 @@ class App {
       called = 'The deck ran out a second time: everyone shows their hand';
       detail = 'Nobody wins this round; everyone scores their hand';
     } else {
-      const ct = result.totals[caller];
+      const ct = result.totals[caller], how = result.salami ? 'called Salami' : 'called';
       if (result.caught) {
-        called = `${who([caller])} called with ${ct} and got caught: ${ct} + ${CAUGHT_PENALTY} = ${ct + CAUGHT_PENALTY}`;
+        called = `${who([caller])} ${how} with ${ct} and got caught: ${ct} + ${CAUGHT_PENALTY} = ${ct + CAUGHT_PENALTY}`;
         detail = `${who(result.winners)} had the lowest hand (${result.totals[result.winners[0]]})`;
         if (result.tiebreak) detail += `, winning the tie on ${result.tiebreak}`;
       } else {
-        called = `${who([caller])} called with ${ct}`;
-        detail = 'Nobody had an equal or lower hand';
+        called = `${who([caller])} ${how} with ${ct}`;
+        detail = result.salami ? `Nobody had an equal or lower hand, so everyone else adds +${SALAMI_BONUS}`
+          : 'Nobody had an equal or lower hand';
       }
     }
     if (this.autoFinished && match.over) {
@@ -787,10 +932,10 @@ class App {
     else headline = `Round ${summary.number}: ${wins(result.winners)}`;
 
     // lay the panel out first (relative y), then draw it centred
-    const x1 = CX - 215, x2 = CX + 215, inner = x2 - x1 - 48, ops = [];
+    const half = Math.min(u(225), W / 2 - 12), x1 = CX - half, x2 = CX + half, inner = x2 - x1 - u(40), ops = [];
     let y = 0;
     const line = (s, size, bold, color, gap) => {
-      const f = font(size, bold), lh = Math.round(size * 1.35);
+      const f = font(size, bold), lh = Math.round(u(size) * 1.35);
       for (const ln of this.wrap(s, inner, f)) { ops.push(['text', ln, CX, y, { size, bold, color, baseline: 'top' }]); y += lh; }
       y += gap;
     };
@@ -799,11 +944,12 @@ class App {
     line(called, 13, false, TEXT, 3);
     line(detail, 12, false, knocked.length ? '#e69a9a' : MUTED, 12);
     if (match.mode === RACE) {
-      const cols = { name: x1 + 28, hand: x1 + 196, round: x1 + 286, score: x1 + 352, note: x1 + 366 };
+      const span = x2 - x1, col = (f) => x1 + span * f;
+      const cols = { name: col(0.06), hand: col(0.44), round: col(0.65), score: col(0.82), note: col(0.85) };
       const cell = (key, s, color, size = 12) => ops.push(['text', s, cols[key], y,
         { size, bold: true, color, baseline: 'top', align: key === 'name' || key === 'note' ? 'left' : 'right' }]);
       for (const [key, s] of [['name', 'Player'], ['hand', 'Hand'], ['round', 'This round'], ['score', 'Score']]) cell(key, s, MUTED, 11);
-      y += 22;
+      y += u(22);
       ops.push(['line', x1 + 24, y, x2 - 24]);
       y += 6;
       for (const name of match.seats) {
@@ -812,63 +958,75 @@ class App {
         const color = outNow || outBefore ? OUT_RED : result.winners.includes(name) ? WINNER : TEXT;
         cell('name', who([name]), color);
         if (played) {
-          cell('hand', String(result.totals[name]) + (name === caller && result.caught ? `+${CAUGHT_PENALTY}` : ''), color);
+          const extra = name === caller && result.caught ? `+${CAUGHT_PENALTY}`
+            : result.salami && !result.caught && name !== caller ? `+${SALAMI_BONUS}` : '';
+          cell('hand', String(result.totals[name]) + extra, color);
           const pts = summary.added[name];
           cell('round', pts === 0 ? '0' : `+${pts}`, color);
         }
         cell('score', String(match.scores[name]), color);
         const note = outNow || outBefore ? 'out' : match.winners.includes(name) || result.winners.includes(name) ? '★' : '';
         cell('note', note, color, 11);
-        y += 24;
+        y += u(24);
       }
       y += 4;
     }
-    if (match.mode === RACE && !match.over) { ops.push(['next', y + 2]); y += 44; }
+    if (match.mode === RACE && !match.over) { ops.push(['next', y + u(2)]); y += u(44); }
     else line('Press New game to play again', 11, false, MUTED, 4);
 
     const height = y + 28;
-    const top = Math.min(Math.max(CY + 24 - height / 2, 96), H - 210 - height);
+    // a little below the middle (the thrown cards are cleared at round end), clear of the top seats
+    const top = Math.min(Math.max(CY + (PORTRAIT ? 24 : 52) - height / 2, 96), HAND_Y - BIG[1] / 2 - 14 - height);
     const oy = top + 18;
-    this.rrect(x1 + 3, top + 5, x2 + 3, top + height + 5, 18); c.fillStyle = '#030a06'; c.fill();
+    this.rrect(x1 + 3, top + 5, x2 + 3, top + height + 5, 18); c.fillStyle = '#03070d'; c.fill();
     this.rrect(x1, top, x2, top + height, 18); c.fillStyle = PANEL; c.fill(); c.strokeStyle = WINNER; c.lineWidth = 2; c.stroke();
     for (const op of ops) {
       if (op[0] === 'text') this.text(op[1], op[2], op[3] + oy, op[4]);
-      else if (op[0] === 'line') { c.beginPath(); c.moveTo(op[1], op[2] + oy); c.lineTo(op[3], op[2] + oy); c.strokeStyle = '#2d5a3d'; c.lineWidth = 1; c.stroke(); }
-      else if (op[0] === 'next') this.drawButton('Continue to next round', CX, op[1] + oy + 17, { primary: true, anchor: 'center', onClick: () => { this.sfx('click'); this.startRound(); } });
+      else if (op[0] === 'line') { c.beginPath(); c.moveTo(op[1], op[2] + oy); c.lineTo(op[3], op[2] + oy); c.strokeStyle = '#2a4466'; c.lineWidth = 1; c.stroke(); }
+      else if (op[0] === 'next') this.drawButton('Continue to next round', CX, op[1] + oy + u(16), { primary: true, anchor: 'center', onClick: () => { this.sfx('click'); this.startRound(); } });
     }
   }
 
   drawToast(now) {
-    const alpha = this.toastAlpha(now);
-    if (!alpha) return;
-    const c = this.ctx, fade = 1 - alpha, under = FELT_CENTER, f = font(13, true);
-    const lines = this.wrap(this.toastMsg, 560, f), lh = 18;
-    c.font = f;
-    const width = Math.max(...lines.map((l) => c.measureText(l).width));
-    const bottom = TOAST_Y - 6, topY = bottom - lines.length * lh;
-    this.rrect(CX - width / 2 - 18, topY - 5, CX + width / 2 + 18, bottom + 5, 14);
-    c.fillStyle = mix('#0c2a19', under, fade); c.fill();
-    c.strokeStyle = mix(GOLD, under, fade); c.lineWidth = 1; c.stroke();
-    lines.forEach((ln, i) => this.text(ln, CX, topY + i * lh + lh / 2, { size: 13, bold: true, color: mix(TEXT, under, fade) }));
+    if (!this.toastMsg) return;
+    const { alpha, lift } = this.fadeState(now, this.toastAt, TOAST_MS);
+    if (alpha <= 0) return;
+    const c = this.ctx, lines = this.wrap(this.toastMsg, Math.min(560, W - 40), font(11.5, true)), lh = u(15);
+    const bottom = TOAST_Y - 2 - lift;
+    c.save();
+    c.globalAlpha = alpha;
+    c.shadowColor = 'rgba(0, 0, 0, 0.75)'; c.shadowBlur = 6; c.shadowOffsetY = 1;   // readable without a box
+    lines.forEach((ln, i) => this.text(ln, CX, bottom - (lines.length - i) * lh + lh / 2, { size: 11.5, bold: true, color: TEXT }));
+    c.restore();
   }
 
   drawBar() {
     const game = this.game;
     let left = 20;
-    left += this.drawButton('New game', left, BAR_Y, { onClick: () => { this.sfx('click'); this.setup.open(); } }) + 8;
-    const soundLabel = !this.sounds.available ? '♪ No sound' : this.sounds.enabled ? '♪ Sound on' : '♪ Sound off';
+    left += this.drawButton(PORTRAIT ? 'New' : 'New game', left, BAR_Y, { onClick: () => { this.sfx('click'); this.setup.open(); } }) + 8;
+    const soundLabel = !this.sounds.available ? '♪ No sound' : PORTRAIT ? (this.sounds.enabled ? '♪' : '♪ off')
+      : this.sounds.enabled ? '♪ Sound on' : '♪ Sound off';
     left += this.drawButton(soundLabel, left, BAR_Y, { enabled: this.sounds.available, onClick: () => this.toggleSound() }) + 14;
-    const callLabel = this.match?.mode === RACE ? 'Call showdown · end round' : 'Call showdown · end game';
+    const callLabel = this.myTurn(OPENING) ? 'Call Salami' : PORTRAIT ? 'Call showdown'
+      : this.match?.mode === RACE ? 'Call showdown · end round' : 'Call showdown · end game';
     const canCall = !!game && game.canCall(HUMAN) && !this.animating;
     let right = W - 20 - this.drawButton(callLabel, W - 20, BAR_Y, { primary: true, enabled: canCall, anchor: 'right', onClick: () => this.onCall() }) - 14;
     if (this.myTurn(OPENING)) {
       right -= this.drawButton('Play on', right + 6, BAR_Y, { anchor: 'right', onClick: () => { this.sfx('click'); this.onPlayOn(); } }) + 8;
     }
-    const status = this.statusText();
+    const status = this.statusText(), now = performance.now();
+    if (status !== this.lastStatus) { this.lastStatus = status; this.statusAt = now; }
     if (status) {
-      const lines = this.wrap(status, right - left, font(13, true));
-      const lh = 17, y0 = BAR_Y - ((lines.length - 1) * lh) / 2;
-      lines.forEach((ln, i) => this.text(ln, (left + right) / 2, y0 + i * lh, { size: 13, bold: true, color: GOLD }));
+      const { alpha, lift } = this.fadeState(now, this.statusAt, STATUS_MS);
+      if (alpha > 0) {
+        // narrow layout: the status sits above the buttons, full width
+        const [x0, x1, yc] = PORTRAIT ? [16, W - 16, BAR_Y - u(42)] : [left, right, BAR_Y];   // narrow: above the buttons
+        const lines = this.wrap(status, x1 - x0, font(11.5, true));
+        const lh = u(15), y0 = yc - ((lines.length - 1) * lh) / 2 - lift;
+        this.ctx.save(); this.ctx.globalAlpha = alpha;
+        lines.forEach((ln, i) => this.text(ln, (x0 + x1) / 2, y0 + i * lh, { size: 11.5, bold: true, color: GOLD }));
+        this.ctx.restore();
+      }
     }
   }
 
@@ -885,7 +1043,7 @@ class App {
     if (!game.players.includes(HUMAN)) return `You're out. ${game.currentPlayer} is playing…`;
     if (game.currentPlayer !== HUMAN) return `${game.currentPlayer} is playing…`;
     if (this.animating) return '';
-    if (game.phase === OPENING) return `Opening call: your hand is ${game.total(HUMAN)} (${OPENING_CALL_LIMIT} or less). Call showdown now, or Play on.`;
+    if (game.phase === OPENING) return `Salami: your hand is ${game.total(HUMAN)} (${OPENING_CALL_LIMIT} or less). Call Salami before anyone throws (if you're not caught, everyone else gets +${SALAMI_BONUS}), or Play on.`;
     if (game.phase === PICK) {
       if (game.pickables.length > 1) return 'Pick up: click the deck, or any one of the gold cards.';
       if (game.pickable) return `Pick up: click the deck, or the gold ${cardText(game.pickable)}.`;
@@ -929,7 +1087,7 @@ class SetupDialog {
         box.appendChild(b);
       }
     }
-    this.el.querySelector('#opening-note').textContent = `Before the first throw of a round, anyone with ${OPENING_CALL_LIMIT} or less may call.`;
+    this.el.querySelector('#opening-note').textContent = `Before the first throw of a round, anyone with ${OPENING_CALL_LIMIT} or less may call Salami: if they're not caught, everyone else gets +${SALAMI_BONUS}.`;
     this.el.querySelector('#deal').addEventListener('click', () => this.start());
     this.el.querySelector('#cancel').addEventListener('click', () => this.close());
     this.el.addEventListener('keydown', (e) => {
@@ -963,4 +1121,5 @@ class SetupDialog {
   }
 }
 
+document.documentElement.classList.add(MODE);   // 'popup' fixes the page at Chrome's 800x600 popup size
 window.dumbal = new App(document.getElementById('table'));

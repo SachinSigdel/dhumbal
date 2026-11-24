@@ -5,7 +5,7 @@ import time
 
 from cards import card_text, is_joker, joker_stands_for
 from game import (CALL_LIMITS, CAUGHT_PENALTY, DEFAULT_CALL_LIMIT, HUMAN, MAX_PLAYERS, MIN_PLAYERS, OPENING,
-                  OPENING_CALL_LIMIT, QUICK, RACE, RACE_LIMIT, DumbalGame,
+                  OPENING_CALL_LIMIT, QUICK, RACE, RACE_LIMIT, SALAMI_BONUS, DumbalGame,
                   Match, ShowdownResult)
 
 
@@ -69,7 +69,7 @@ def show_showdown(result: ShowdownResult):
     if result.deck_out:
         print("The deck ran out a second time! Everyone reveals:")
     else:
-        print(f"{result.caller} called a showdown! Everyone reveals:")
+        print(f"{result.caller} called {'Salami' if result.salami else 'a showdown'}! Everyone reveals:")
     for name, cards in result.hands.items():
         marker = " <- called" if name == result.caller else ""
         print(f"  {name:<5} total {result.totals[name]:>3}:  {fmt(cards)}{marker}")
@@ -83,7 +83,8 @@ def show_showdown(result: ShowdownResult):
         print(f"{result.caller} got caught: {caller_total} + {CAUGHT_PENALTY} = {caller_total + CAUGHT_PENALTY}. "
               f"{' and '.join(result.winners)} had the lowest hand and won the round{tie}.")
     else:
-        print(f"Nobody had {caller_total} or less: {result.caller} wins the round.")
+        print(f"Nobody had {caller_total} or less: {result.caller} wins the round."
+              + (f" Salami: everyone else adds +{SALAMI_BONUS}." if result.salami else ""))
 
 
 def show_scores(match: Match):
@@ -125,8 +126,8 @@ def play_round(game: DumbalGame, bot_delay: float) -> ShowdownResult:
         print()
         show_hand(hand, game.total(HUMAN))
         if game.phase == OPENING:
-            if ask_yes_no(f"Opening call: your hand is {game.total(HUMAN)} ({OPENING_CALL_LIMIT} or less). "
-                          f"Call a showdown now?(y/n)"):
+            if ask_yes_no(f"Salami: your hand is {game.total(HUMAN)} ({OPENING_CALL_LIMIT} or less). "
+                          f"Call Salami now? (not caught = everyone else +{SALAMI_BONUS})(y/n)"):
                 game.call(HUMAN)
             else:
                 game.pass_opening(HUMAN)

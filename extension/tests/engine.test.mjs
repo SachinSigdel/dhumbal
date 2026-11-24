@@ -106,7 +106,7 @@ test('deck runs out twice: no winner, everyone scores their hand', () => {
   assert.deepEqual(g.result.winners, []); assert.deepEqual(g.result.points, g.result.totals);
 });
 
-test('matches: quick winner, race scoring, knock-outs, winner starts next round', () => {
+test('matches: quick winner, race scoring, knock-outs, the player after the winner starts next', () => {
   const roundOf = (m) => { const g = m.newRound(); g.phase = THROW; g.current = g.first; return g; };
   const callNow = (g, n) => { g.current = g.players.indexOf(n); g.phase = THROW; return g.call(n); };
   let m = new Match({ numPlayers: 3, mode: QUICK, rng: new Rng(1), callLimit: 15 }); let g = roundOf(m);
@@ -117,7 +117,7 @@ test('matches: quick winner, race scoring, knock-outs, winner starts next round'
   m = new Match({ numPlayers: 3, mode: RACE, rng: new Rng(1), callLimit: 15 }); g = roundOf(m);
   g.hands = { [HUMAN]: ['3♠'], Bot1: ['9♦', 'K♠'], Bot2: ['K♣', 'Q♣'] }; callNow(g, HUMAN);
   const s1 = m.finishRound(); assert.deepEqual(m.scores, { [HUMAN]: 0, Bot1: 22, Bot2: 25 });
-  assert.equal(m.finishRound(), s1); assert.equal(m.starter, HUMAN);
+  assert.equal(m.finishRound(), s1); assert.equal(m.starter, 'Bot1');   // you won: the next seat starts
   m.scores.Bot2 = 90; g = roundOf(m);
   g.hands = { [HUMAN]: ['A♠'], Bot1: ['2♣'], Bot2: ['K♣'] }; callNow(g, 'Bot1');
   const s2 = m.finishRound(); assert.ok(s2.caught); assert.deepEqual(s2.winners, [HUMAN]);
@@ -125,6 +125,25 @@ test('matches: quick winner, race scoring, knock-outs, winner starts next round'
   g = roundOf(m); assert.deepEqual(g.players, [HUMAN, 'Bot1']);
   m.scores.Bot1 = 95; g.hands = { [HUMAN]: ['A♠'], Bot1: ['K♣'] }; callNow(g, HUMAN); m.finishRound();
   assert.ok(m.over); assert.deepEqual(m.winners, [HUMAN]);
+
+  // who starts after: a winner in the last seat (wraps to you), a knocked-out next seat (skipped),
+  // and a round with no winner (the seat after that round's starter)
+  const finishWith = (winner, { knock = [], deckOut = false, starter = HUMAN } = {}) => {
+    const mm = new Match({ numPlayers: 4, mode: RACE, rng: new Rng(3), callLimit: 15 });
+    mm.starter = starter;
+    const gg = roundOf(mm);
+    for (const p of knock) mm.scores[p] = 99;
+    if (deckOut) { gg.deckOut(); } else {
+      gg.hands = { [HUMAN]: ['K♠'], Bot1: ['K♦'], Bot2: ['K♥'], Bot3: ['K♣'] };
+      gg.hands[winner] = ['A♠']; callNow(gg, winner);
+    }
+    mm.finishRound();
+    return mm.starter;
+  };
+  assert.equal(finishWith('Bot1'), 'Bot2');
+  assert.equal(finishWith('Bot3'), HUMAN);
+  assert.equal(finishWith('Bot1', { knock: ['Bot2'] }), 'Bot3');
+  assert.equal(finishWith(null, { deckOut: true, starter: 'Bot2' }), 'Bot3');
 });
 
 test('random games and full races always finish with consistent cards', () => {
@@ -172,3 +191,60 @@ test('random games and full races always finish with consistent cards', () => {
 });
 
 console.log(`\n${passed} tests passed`);
+
+// ---- save and restore (the toolbar popup closes whenever you click away) ----
+import { saveMatch, loadMatch } from '../js/game.js';
+{
+  let checked = 0;
+  for (let seed = 0; seed < 200; seed++) {
+    const m = new Match({ numPlayers: 2 + (seed % 4), jokers: 1 + (seed % 2), mode: seed % 2 ? RACE : QUICK, rng: new Rng(seed), callLimit: [5, 10, 15][seed % 3] });
+    const twin = new Match({ numPlayers: 2 + (seed % 4), jokers: 1 + (seed % 2), mode: seed % 2 ? RACE : QUICK, rng: new Rng(seed), callLimit: [5, 10, 15][seed % 3] });
+    let restored = null;
+    const steps = 3 + (seed % 25);
+    // play both the same way; part-way through, save one and continue from the restored copy
+    let a = m, b = twin, n = 0;
+    while (!a.over) {
+      const ga = a.game && !a.game.over ? a.game : a.newRound();
+      const gb = b.game && !b.game.over ? b.game : b.newRound();
+      while (!ga.over) {
+        ga.botTurn(); gb.botTurn(); n++;
+        if (n === steps && !restored) {
+          restored = loadMatch(JSON.parse(JSON.stringify(saveMatch(a))));
+          assert.ok(restored, 'snapshot loads');
+          a = restored;
+          checked++;
+          break;
+        }
+      }
+      if (a !== m && a.game && !a.game.over) continue;   // keep playing the restored copy's round
+      if (a.game?.over) a.finishRound();
+      if (b.game?.over) b.finishRound();
+    }
+    while (!b.over) { const gb = b.game && !b.game.over ? b.game : b.newRound(); while (!gb.over) gb.botTurn(); b.finishRound(); }
+    assert.deepEqual(a.scores, b.scores, `seed ${seed}: restored game diverged`);
+    assert.deepEqual(a.winners, b.winners);
+  }
+  assert.equal(loadMatch({ v: 999 }), null);
+  console.log(`ok - save/restore: ${checked} games resumed from a snapshot and finished exactly like an unbroken twin`);
+}
+
+// ---- Salami: a showdown called before anyone has thrown ----
+import { SALAMI_BONUS } from '../js/game.js';
+{
+  const opening = (hands, caller) => {
+    const g = new DumbalGame({ numPlayers: 3, rng: new Rng(1), callLimit: 5 });
+    g.hands = hands; g.phase = OPENING; g.current = g.players.indexOf(caller);
+    return g.call(caller);
+  };
+  let r = opening({ [HUMAN]: ['A♠', '2♠', '3♦', '4♣'], Bot1: ['K♠', 'Q♦'], Bot2: ['9♣', '8♥'] }, HUMAN);
+  assert.ok(r.salami && !r.caught); assert.deepEqual(r.winners, [HUMAN]);
+  assert.deepEqual(r.points, { [HUMAN]: 0, Bot1: 25 + SALAMI_BONUS, Bot2: 17 + SALAMI_BONUS });
+  r = opening({ [HUMAN]: ['K♠', 'A♦'], Bot1: ['3♠', '4♦'], Bot2: ['9♣', '8♥'] }, HUMAN);
+  assert.ok(r.salami && r.caught); assert.deepEqual(r.winners, ['Bot1']);
+  assert.deepEqual(r.points, { [HUMAN]: 14 + 25, Bot1: 0, Bot2: 17 });
+  const g = new DumbalGame({ numPlayers: 3, rng: new Rng(1), callLimit: 15, opening: false });
+  g.hands = { [HUMAN]: ['A♠', '2♠'], Bot1: ['K♠'], Bot2: ['9♣', '8♥'] };
+  r = g.call(HUMAN);
+  assert.ok(!r.salami); assert.deepEqual(r.points, { [HUMAN]: 0, Bot1: 13, Bot2: 17 });
+  console.log('ok - Salami: +10 to the others when not caught, normal scoring when caught, none mid-game');
+}
