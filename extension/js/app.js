@@ -89,9 +89,9 @@ function loadCardImages(onLoad) {
 
 const store = {
   get(key, fallback) {
-    try { const v = localStorage.getItem(`dumbal.${key}`); return v === null ? fallback : JSON.parse(v); } catch { return fallback; }
+    try { const v = localStorage.getItem(`dhumbal.${key}`); return v === null ? fallback : JSON.parse(v); } catch { return fallback; }
   },
-  set(key, value) { try { localStorage.setItem(`dumbal.${key}`, JSON.stringify(value)); } catch { /* private mode */ } },
+  set(key, value) { try { localStorage.setItem(`dhumbal.${key}`, JSON.stringify(value)); } catch { /* private mode */ } },
 };
 
 // ---------- the app ----------
@@ -137,7 +137,7 @@ class App {
     window.addEventListener('pagehide', () => this.save());
     // the popup and the side panel share one saved game: when the other view saves, follow it
     window.addEventListener('storage', (e) => {
-      if (e.key === 'dumbal.game' && e.newValue && !this.animating && !this.flight) {
+      if (e.key === 'dhumbal.game' && e.newValue && !this.animating && !this.flight) {
         clearTimeout(this.pendingBot); this.pendingBot = null;
         this.token += 1;
         if (this.resume(true)) this.requestRender();
@@ -1156,4 +1156,4 @@ class SetupDialog {
 }
 
 document.documentElement.classList.add(MODE);   // 'popup' fixes the page at Chrome's 800x600 popup size
-window.dumbal = new App(document.getElementById('table'));
+window.dhumbal = new App(document.getElementById('table'));
