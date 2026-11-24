@@ -166,7 +166,7 @@ class Sounds:
 
     def __init__(self, enabled: bool = True, folder: str | None = None):
         self.enabled = enabled
-        self.folder = folder or os.path.join(tempfile.gettempdir(), f"dumbal-sounds-{VERSION}")
+        self.folder = folder or os.path.join(tempfile.gettempdir(), f"dhumbal-sounds-{VERSION}")
         self.command = self._find_player()
         self.ready = False
         if enabled:

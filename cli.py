@@ -5,7 +5,7 @@ import time
 
 from cards import card_text, is_joker, joker_stands_for
 from game import (CALL_LIMITS, CAUGHT_PENALTY, DEFAULT_CALL_LIMIT, HUMAN, MAX_PLAYERS, MIN_PLAYERS, OPENING,
-                  OPENING_CALL_LIMIT, QUICK, RACE, RACE_LIMIT, SALAMI_BONUS, DumbalGame,
+                  OPENING_CALL_LIMIT, QUICK, RACE, RACE_LIMIT, SALAMI_BONUS, DhumbalGame,
                   Match, ShowdownResult)
 
 
@@ -103,7 +103,7 @@ def ask_mode() -> str:
     return QUICK if ask_choice("Which game?", [1, 2], 1) == 1 else RACE
 
 
-def play_round(game: DumbalGame, bot_delay: float) -> ShowdownResult:
+def play_round(game: DhumbalGame, bot_delay: float) -> ShowdownResult:
     """Play one round until it ends (a call, or the deck running out twice)."""
     while not game.over:
         if game.current_player != HUMAN:

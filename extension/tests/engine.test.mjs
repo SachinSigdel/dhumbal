@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import * as C from '../js/cards.js';
 import {
-  CAUGHT_PENALTY, DumbalGame, GameError, HUMAN, Match, OPENING, PICK, QUICK, RACE, RACE_LIMIT, THROW,
+  CAUGHT_PENALTY, DhumbalGame, GameError, HUMAN, Match, OPENING, PICK, QUICK, RACE, RACE_LIMIT, THROW,
 } from '../js/game.js';
 
 const { Rng } = C;
@@ -11,7 +11,7 @@ let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('ok -', name); };
 const throws = (fn) => assert.throws(fn, GameError);
 const fresh = (n = 3, j = 1, seed = 0, extra = {}) =>
-  new DumbalGame({ numPlayers: n, jokers: j, rng: new Rng(seed), opening: false, callLimit: 15, ...extra });
+  new DhumbalGame({ numPlayers: n, jokers: j, rng: new Rng(seed), opening: false, callLimit: 15, ...extra });
 
 test('cards: deck, values, sets and sequences', () => {
   assert.equal(C.newDeck(new Rng(1), 1).length, 53);
@@ -88,7 +88,7 @@ test('showdown: clean call, caught (+25), tie-breaks', () => {
 });
 
 test('opening call: anyone with 15 or less, in turn, before the first throw', () => {
-  const g = new DumbalGame({ numPlayers: 3, rng: new Rng(0), first: 1, callLimit: 5 });
+  const g = new DhumbalGame({ numPlayers: 3, rng: new Rng(0), first: 1, callLimit: 5 });
   g.hands = { [HUMAN]: ['K♠', 'Q♠', 'J♠', '9♦', '8♣'], Bot1: ['2♠', '3♦', '4♣', 'A♥', '5♠'], Bot2: ['A♣', '2♦', '3♥', '4♠', '4♥'] };
   g.phase = OPENING; g.openingOffered = 0; g.current = 1; g.nextOpener();
   assert.equal(g.currentPlayer, 'Bot1'); assert.ok(g.canCall('Bot1')); assert.equal(g.limitNow(), 15);
@@ -150,7 +150,7 @@ test('random games and full races always finish with consistent cards', () => {
   let games = 0, races = 0;
   for (let seed = 0; seed < 1500; seed++) {
     const n = 2 + (seed % 4), j = 1 + (Math.floor(seed / 4) % 2), rng = new Rng(seed + 1000);
-    const g = new DumbalGame({ numPlayers: n, jokers: j, rng: new Rng(seed), callLimit: [5, 10, 15][seed % 3] });
+    const g = new DhumbalGame({ numPlayers: n, jokers: j, rng: new Rng(seed), callLimit: [5, 10, 15][seed % 3] });
     const unlocked = new Set();
     for (let step = 0; step < 3000 && !g.over; step++) {
       if (g.phase === OPENING && g.currentPlayer === HUMAN) { rng.random() < 0.2 ? g.call(HUMAN) : g.passOpening(HUMAN); continue; }
@@ -232,7 +232,7 @@ import { saveMatch, loadMatch } from '../js/game.js';
 import { SALAMI_BONUS } from '../js/game.js';
 {
   const opening = (hands, caller) => {
-    const g = new DumbalGame({ numPlayers: 3, rng: new Rng(1), callLimit: 5 });
+    const g = new DhumbalGame({ numPlayers: 3, rng: new Rng(1), callLimit: 5 });
     g.hands = hands; g.phase = OPENING; g.current = g.players.indexOf(caller);
     return g.call(caller);
   };
@@ -242,7 +242,7 @@ import { SALAMI_BONUS } from '../js/game.js';
   r = opening({ [HUMAN]: ['K♠', 'A♦'], Bot1: ['3♠', '4♦'], Bot2: ['9♣', '8♥'] }, HUMAN);
   assert.ok(r.salami && r.caught); assert.deepEqual(r.winners, ['Bot1']);
   assert.deepEqual(r.points, { [HUMAN]: 14 + 25, Bot1: 0, Bot2: 17 });
-  const g = new DumbalGame({ numPlayers: 3, rng: new Rng(1), callLimit: 15, opening: false });
+  const g = new DhumbalGame({ numPlayers: 3, rng: new Rng(1), callLimit: 15, opening: false });
   g.hands = { [HUMAN]: ['A♠', '2♠'], Bot1: ['K♠'], Bot2: ['9♣', '8♥'] };
   r = g.call(HUMAN);
   assert.ok(!r.salami); assert.deepEqual(r.points, { [HUMAN]: 0, Bot1: 13, Bot2: 17 });

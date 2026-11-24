@@ -1,4 +1,4 @@
-// The Dumbal table in the browser: a port of gui.py onto an HTML canvas.
+// The Dhumbal table in the browser: a port of gui.py onto an HTML canvas.
 // Everything (table, cards, buttons, result panel) is drawn on one canvas each frame from the
 // game state; clicks are matched against the regions drawn last frame.
 
@@ -781,7 +781,7 @@ class App {
     }
     this.drawHuman();
     this.drawFlights(now);
-    if (result) this.drawResult();
+    if (result && game === this.match.scoredGame) this.drawResult();   // only once the round is scored
   }
 
   drawFlights(now) {

@@ -12,7 +12,7 @@ from cards import (auto_group, card_text, card_value, is_joker, is_red, joker_gr
                    joker_stands_for, order_throw)
 from game import (CALL_LIMITS, CAUGHT_PENALTY, DEFAULT_CALL_LIMIT, HUMAN, MAX_PLAYERS, MIN_PLAYERS, OPENING,
                   OPENING_CALL_LIMIT, PICK, QUICK, RACE, RACE_LIMIT, SALAMI_BONUS, THROW,
-                  DumbalGame, Match)
+                  DhumbalGame, Match)
 
 W, H = 1040, 770               # fits a 1440x900 screen with the menu bar and title bar
 CX, CY = W // 2, 318            # table centre
@@ -224,7 +224,7 @@ class SetupDialog(tk.Toplevel):
         self.on_cancel()
 
 
-class DumbalApp:
+class DhumbalApp:
     def __init__(self, root: tk.Tk, rng: random.Random | None = None,
                  bot_delay_ms: int = BOT_THINK_MS, ask_setup: bool = True, animations: bool = True,
                  sound: bool | None = None):
@@ -237,7 +237,7 @@ class DumbalApp:
         self.settings = {"players": 5, "jokers": 1, "mode": QUICK, "call_limit": DEFAULT_CALL_LIMIT}
         self.auto_finished = None          # (round you went out, rounds the bots then played)
         self.match: Match | None = None
-        self.game: DumbalGame | None = None       # the round being played
+        self.game: DhumbalGame | None = None       # the round being played
         self.hidden: set[str] = set()      # cards not drawn because they are in flight
         self.animating = False
         self.shuffling = False
@@ -835,7 +835,7 @@ class DumbalApp:
             else:
                 self.draw_out_seat(self.seat_of(name), name)
         self.draw_human()
-        if result:
+        if result and game is self.match._scored_game:   # only once the round is scored
             self.draw_result()
         self.draw_toast()
 
@@ -1156,7 +1156,7 @@ class DumbalApp:
 
 def main():
     root = tk.Tk()
-    DumbalApp(root)
+    DhumbalApp(root)
     root.mainloop()
 
 

@@ -159,7 +159,7 @@ class BotTurn:
     passed: bool = False            # declined the opening call
 
 
-class DumbalGame:
+class DhumbalGame:
     def __init__(self, num_players: int = 5, jokers: int = 1, rng: random.Random | None = None,
                  names: list[str] | None = None, first: int = 0, call_limit: int = DEFAULT_CALL_LIMIT,
                  opening: bool = True):
@@ -479,8 +479,8 @@ class Match:
         self.out: list[str] = []                             # knocked out, in order
         self.rounds: list[RoundSummary] = []
         self.starter = self.rng.choice(self.seats)           # first round: random starter
-        self.game: DumbalGame | None = None
-        self._scored_game: DumbalGame | None = None
+        self.game: DhumbalGame | None = None
+        self._scored_game: DhumbalGame | None = None
         self.finished = False
         self.winners: list[str] = []                         # empty if the match ended with no winner
 
@@ -492,13 +492,13 @@ class Match:
     def over(self) -> bool:
         return self.finished
 
-    def new_round(self) -> DumbalGame:
+    def new_round(self) -> DhumbalGame:
         if self.over:
             raise GameError("The match is over.")
         if self.game is not None and not self.game.over:
             raise GameError("The current round is still being played.")
         names = self.active
-        self.game = DumbalGame(jokers=self.jokers, rng=self.rng, names=names,
+        self.game = DhumbalGame(jokers=self.jokers, rng=self.rng, names=names,
                                first=names.index(self.starter), call_limit=self.call_limit)
         return self.game
 
