@@ -1,4 +1,4 @@
-"""Sound effects for the Dumbal window.
+"""Sound effects for the Dhumbal window.
 
 Every sound is synthesised here (no audio files ship with the game): they are written
 once as small WAV files to a cache folder and played with the system's own player

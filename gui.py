@@ -1,4 +1,4 @@
-"""Window (tkinter) version of Dumbal, drawn as a round card table with animations."""
+"""Window (tkinter) version of Dhumbal, drawn as a round card table with animations."""
 from __future__ import annotations
 
 import math
@@ -18,7 +18,7 @@ W, H = 1040, 770               # fits a 1440x900 screen with the menu bar and ti
 CX, CY = W // 2, 318            # table centre
 RX, RY = 430, 220               # table radii
 HAND_Y = 634                    # your hand
-TOAST_Y = CY - 74               # bottom edge of action messages: middle of the board, above "DUMBAL"
+TOAST_Y = CY - 74               # bottom edge of action messages: middle of the board, above "DHUMBAL"
 BAR_Y = 744                     # status line and buttons
 
 # colours
@@ -149,7 +149,7 @@ class SetupDialog(tk.Toplevel):
         self.mode = tk.StringVar(value=mode)
         self.call_limit = tk.IntVar(value=call_limit)
 
-        tk.Label(self, text="♠ ♥  Dumbal  ♦ ♣", font=f(24, "bold"), bg=PANEL, fg=GOLD).pack(anchor="w")
+        tk.Label(self, text="♠ ♥  Dhumbal  ♦ ♣", font=f(24, "bold"), bg=PANEL, fg=GOLD).pack(anchor="w")
         tk.Label(self, text="These rules apply to every player for the whole game.",
                  font=f(12), bg=PANEL, fg=MUTED).pack(anchor="w", pady=(2, 16))
 
@@ -246,7 +246,7 @@ class DumbalApp:
         self.toast_msg, self.toast_alpha, self.toast_job = "", 0.0, None
 
         pick_font(root)
-        root.title("Dumbal")
+        root.title("Dhumbal")
         root.configure(bg=BG_BOTTOM)
         root.resizable(False, False)
         self.canvas = tk.Canvas(root, width=W, height=H, bg=BG_BOTTOM, highlightthickness=0)
