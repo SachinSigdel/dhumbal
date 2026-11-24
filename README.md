@@ -61,7 +61,7 @@ player, bots included.
 ```bash
 python3 gui.py        # window version (tkinter)
 python3 cli.py        # terminal version
-python3 dumbal.py     # terminal, or: python3 dumbal.py --gui
+python3 dhumbal.py     # terminal, or: python3 dhumbal.py --gui
 ```
 
 The window version has sound effects (card snaps, a riffle shuffle, chimes for a call or a win,
@@ -106,5 +106,5 @@ Python one on hands exported from Python.
 | `cli.py`    | Terminal interface                                        |
 | `gui.py`    | tkinter window interface                                  |
 | `sound.py`  | Synthesised sound effects for the window                  |
-| `dumbal.py` | Launcher                                                  |
+| `dhumbal.py`| Launcher                                                  |
 | `extension/`| Chrome extension (Dhumbal): `js/cards.js`, `js/game.js` (engine), `js/app.js` (table), `js/sound.js`, `cards/` (card art) |

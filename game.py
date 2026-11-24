@@ -1,4 +1,4 @@
-"""Dumbal game rules, with no input/output so any interface (CLI, GUI) can drive it.
+"""Dhumbal game rules, with no input/output so any interface (CLI, GUI) can drive it.
 
 The rules chosen at the start (game mode, players, jokers, call limit) stay the same for
 the whole game and apply to every player, human or bot.
