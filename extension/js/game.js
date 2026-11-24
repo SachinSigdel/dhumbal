@@ -1,4 +1,4 @@
-// Dumbal game rules, with no input/output so any interface can drive it.
+// Dhumbal game rules, with no input/output so any interface can drive it.
 // A port of game.py: same rules, same behaviour, same bot strategy.
 //
 // Game modes (see Match): a Quick game is one round; Race to 100 plays rounds until one player
@@ -95,7 +95,7 @@ export class GameError extends Error {}
 const mod = (a, n) => ((a % n) + n) % n;
 
 /** One round. */
-export class DumbalGame {
+export class DhumbalGame {
   constructor({ numPlayers = 5, jokers = 1, rng = new Rng(), names = null, first = 0,
     callLimit = DEFAULT_CALL_LIMIT, opening = true } = {}) {
     if (names) numPlayers = names.length;
@@ -353,7 +353,7 @@ export class Match {
     if (this.over) throw new GameError('The match is over.');
     if (this.game && !this.game.over) throw new GameError('The current round is still being played.');
     const names = this.active;
-    this.game = new DumbalGame({
+    this.game = new DhumbalGame({
       jokers: this.jokers, rng: this.rng, names, first: names.indexOf(this.starter), callLimit: this.callLimit,
     });
     return this.game;
@@ -438,7 +438,7 @@ export function loadMatch(data) {
     finished: copy.finished, winners: copy.winners, game: null, scoredGame: null,
   });
   if (copy.game) {
-    const g = Object.create(DumbalGame.prototype);
+    const g = Object.create(DhumbalGame.prototype);
     Object.assign(g, copy.game, { rng, floorUnlocked: new Set(copy.game.floorUnlocked) });
     m.game = g;
     if (copy.scored) m.scoredGame = g;
