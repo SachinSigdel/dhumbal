@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Dumbal",
+  "version": "1.0.0",
+  "description": "Dumbal, the Nepali card game: lowest hand wins. Play against 1 to 4 bots, quick game or race to 100.",
+  "action": {
+    "default_title": "Play Dumbal",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

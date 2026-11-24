@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dumbal</title>
+  <link rel="icon" href="icons/icon-32.png">
+  <link rel="stylesheet" href="css/game.css">
+</head>
+<body>
+  <canvas id="table" aria-label="Dumbal card table"></canvas>
+
+  <div id="setup" class="backdrop" hidden>
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+      <h1 id="setup-title">♠ ♥ &nbsp;Dumbal&nbsp; ♦ ♣</h1>
+      <p class="muted">These rules apply to every player for the whole game.</p>
+
+      <h2>Game</h2>
+      <div class="choices" data-choice="mode"></div>
+      <p id="mode-info" class="muted small"></p>
+
+      <h2>Players (you + bots)</h2>
+      <div class="choices" data-choice="players"></div>
+
+      <h2>Jokers (worth 0 points)</h2>
+      <div class="choices" data-choice="jokers"></div>
+
+      <h2>Call a showdown during play with</h2>
+      <div class="choices" data-choice="callLimit"></div>
+      <p id="opening-note" class="muted small"></p>
+
+      <div class="actions">
+        <button id="cancel" type="button" class="pill">Cancel</button>
+        <button id="deal" type="button" class="pill primary">Deal</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
