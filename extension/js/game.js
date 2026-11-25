@@ -304,10 +304,18 @@ export class DhumbalGame {
     const hand = this.hands[name];
     const choice = chooseBotThrow(hand, this.floorUnlocked.has(name));
     turn.thrown = this.throw(name, choice.card, { alone: choice.alone, joker: choice.joker });
+    turn.pick = this.botPick(name, turn.thrown);
+    if (turn.pick.roundOver) turn.showdown = this.result;
+    return turn;
+  }
 
+  /** The pick-up half of a bot's turn, after throwing `thrown` (also used online when a
+   *  player threw and then dropped out). */
+  botPick(name, thrown = this.lastThrow[name]) {
+    const hand = this.hands[name];
     // floor cards on offer; a plain low card only if lower than what was just thrown
     let best = null, bestKey = null;
-    const shed = handTotal(turn.thrown);
+    const shed = handTotal(thrown);
     for (const offered of this.pickables) {
       const value = cardValue(offered);
       const pairsUp = hand.some((c) => rank(c) === rank(offered));
@@ -317,15 +325,15 @@ export class DhumbalGame {
         if (bestKey === null || tupleGreater(key, bestKey)) { best = offered; bestKey = key; }
       }
     }
-    turn.pick = this.pick(name, best !== null, best);
-    if (turn.pick.roundOver) turn.showdown = this.result;
-    return turn;
+    return this.pick(name, best !== null, best);
   }
 }
 
 /** A whole game: one round (QUICK) or rounds until one player is left (RACE). */
 export class Match {
-  constructor({ numPlayers = 5, jokers = 1, mode = QUICK, rng = new Rng(), callLimit = DEFAULT_CALL_LIMIT } = {}) {
+  constructor({ numPlayers = 5, jokers = 1, mode = QUICK, rng = new Rng(), callLimit = DEFAULT_CALL_LIMIT,
+    names = null } = {}) {
+    if (names) numPlayers = names.length;   // online play: the seats are the players' ids
     if (mode !== QUICK && mode !== RACE) throw new Error('Mode must be quick or race.');
     if (numPlayers < MIN_PLAYERS || numPlayers > MAX_PLAYERS) {
       throw new Error(`Players must be between ${MIN_PLAYERS} and ${MAX_PLAYERS}.`);
@@ -335,7 +343,7 @@ export class Match {
     this.jokers = jokers;
     this.callLimit = callLimit;
     this.rng = rng;
-    this.seats = seatNames(numPlayers);
+    this.seats = names ? [...names] : seatNames(numPlayers);
     this.scores = Object.fromEntries(this.seats.map((p) => [p, 0]));
     this.out = [];
     this.rounds = [];
