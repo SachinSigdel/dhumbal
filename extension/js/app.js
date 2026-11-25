@@ -1364,7 +1364,7 @@ const MODE_INFO = {
   [RACE]: `Rounds until one player is left. The round winner scores 0, everyone else adds their hand total. Reach ${RACE_LIMIT} and you're out; the last one standing wins.`,
 };
 
-const BOTS = 'bots', FRIENDS = 'friends';
+const BOTS = 'bots', FRIENDS = 'friends', JOIN = 'join', CREATE = 'create';
 
 class SetupDialog {
   constructor(app) {
@@ -1399,15 +1399,40 @@ class SetupDialog {
     });
     this.codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); this.join(); } });
     this.el.querySelector('#join').addEventListener('click', () => this.join());
+    this.tab = store.get('onlineTab', JOIN) === CREATE ? CREATE : JOIN;
+    const tabs = [...this.el.querySelectorAll('[role="tab"]')];
+    for (const b of tabs) {
+      b.addEventListener('click', () => this.showTab(b.dataset.tab));
+      b.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          e.preventDefault();
+          const next = tabs[(tabs.indexOf(b) + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+          this.showTab(next.dataset.tab);
+          next.focus();
+        }
+      });
+    }
     this.el.querySelector('#deal').addEventListener('click', () => this.start());
     this.el.querySelector('#cancel').addEventListener('click', () => this.close());
     this.el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.target !== this.codeInput) { e.preventDefault(); this.start(); }
+      if (e.key === 'Enter' && e.target !== this.codeInput && !e.target.closest?.('[role="tab"]')) {
+        e.preventDefault();
+        if (this.online && this.tab === JOIN) this.join(); else this.start();
+      }
       if (e.key === 'Escape') { e.preventDefault(); this.close(); }
     });
   }
 
   get online() { return this.values.opponents === FRIENDS; }
+
+  /** Online: show the Join a game or the Create a game tab. */
+  showTab(tab) {
+    this.tab = tab;
+    store.set('onlineTab', tab);
+    this.showError(null);
+    this.paint();
+    (tab === JOIN ? this.codeInput : this.el.querySelector('#deal')).focus();
+  }
 
   paint() {
     for (const box of this.el.querySelectorAll('[data-choice]')) {
@@ -1420,8 +1445,14 @@ class SetupDialog {
     this.el.querySelector('#rules-note').textContent = this.online
       ? "Choose the rules for everyone at your table. You'll get a code to send your friends."
       : 'These rules apply to every player for the whole game.';
-    this.el.querySelector('#rules-box').classList.toggle('box', this.online);
-    this.el.querySelector('#create-title').hidden = !this.online;
+    for (const b of this.el.querySelectorAll('[role="tab"]')) {
+      const on = b.dataset.tab === this.tab;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', String(on));
+      b.tabIndex = on ? 0 : -1;
+    }
+    this.el.querySelector('#join-panel').hidden = !this.online || this.tab !== JOIN;
+    this.el.querySelector('#rules-box').hidden = this.online && this.tab === JOIN;
     const deal = this.el.querySelector('#deal');
     deal.textContent = this.online ? (this.busy ? 'Creating…' : 'Create table') : 'Deal';
     deal.disabled = this.busy;
@@ -1438,12 +1469,12 @@ class SetupDialog {
     this.values = {
       opponents: s.opponents ?? BOTS, mode: s.mode, players: s.players, jokers: s.jokers, callLimit: s.callLimit,
     };
-    if (message) this.values.opponents = FRIENDS;
+    if (message) { this.values.opponents = FRIENDS; this.tab = JOIN; }
     this.nameInput.value = store.get('name', '');
     this.showError(message);
     this.paint();
     this.el.hidden = false;
-    this.el.querySelector('#deal').focus();
+    (this.online && this.tab === JOIN ? this.codeInput : this.el.querySelector('#deal')).focus();
   }
 
   close() { this.el.hidden = true; this.app.requestRender(); }
