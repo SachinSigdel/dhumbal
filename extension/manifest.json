@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Dhumbal",
   "version": "1.0.0",
-  "description": "Dhumbal, the Nepali card game: lowest hand wins. Play against 1 to 4 bots, quick game or race to 100.",
+  "description": "Dhumbal, the Nepali card game: lowest hand wins. Play friends online or 1 to 4 bots, quick game or race to 100.",
   "action": {
     "default_title": "Play Dhumbal",
     "default_popup": "game.html?popup",

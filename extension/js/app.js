@@ -9,6 +9,7 @@ import {
   CALL_LIMITS, CAUGHT_PENALTY, DEFAULT_CALL_LIMIT, HUMAN, MAX_PLAYERS, MIN_PLAYERS, Match, OPENING,
   OPENING_CALL_LIMIT, PICK, QUICK, RACE, RACE_LIMIT, SALAMI_BONUS, THROW, loadMatch, saveMatch,
 } from './game.js';
+import { OnlineClient } from './online.js';
 import { Sounds } from './sound.js';
 
 // ---------- layout (same numbers as the Python window) ----------
@@ -61,6 +62,12 @@ function mix(c1, c2, t) {
   return '#' + a.map((x, i) => Math.round(x + (b[i] - x) * t).toString(16).padStart(2, '0')).join('');
 }
 const ease = (t) => t * t * (3 - 2 * t);
+/** Avatar letters: B1 for Bot1, otherwise the first letters of the name. */
+function initials(name) {
+  if (/^Bot\d$/.test(name)) return 'B' + name.slice(-1);
+  const words = name.trim().split(/\s+/);
+  return (words.length > 1 ? words[0][0] + words[1][0] : name.slice(0, 2)).toUpperCase();
+}
 const who = (names) => names.map((n) => (n === HUMAN ? 'You' : n)).join(' and ');
 const wins = (names) => who(names) + (names.length === 1 && names[0] !== HUMAN ? ' wins' : ' win');
 function describe(cards) {
@@ -123,6 +130,12 @@ class App {
     this.cardImages = loadCardImages(() => this.requestRender());
     this.lastStatus = '';
     this.statusAt = 0;
+    // playing with friends online (see online.js): the server sends events, we animate them in order
+    this.online = null;
+    this.room = null;            // the table as the server last described it
+    this.netQueue = [];
+    this.netBusy = false;        // animating an event from the server
+    this.netWaiting = false;     // sent a move, waiting for the server to confirm it
 
     this.fit();
     window.addEventListener('resize', () => this.fit());
@@ -131,13 +144,15 @@ class App {
     canvas.addEventListener('click', (e) => this.onPointer(e, e.shiftKey ? 'shift' : 'click'));
     canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); this.onPointer(e, 'alt'); });
     window.addEventListener('keydown', (e) => {
-      if (e.key.toLowerCase() === 'm' && !document.querySelector('#setup:not([hidden])')) this.toggleSound();
+      if (e.target?.tagName === 'INPUT') return;
+      if (e.key.toLowerCase() === 'm' && !document.querySelector('.backdrop:not([hidden])')) this.toggleSound();
     });
     this.setup = new SetupDialog(this);
+    this.lobby = new LobbyDialog(this);
     window.addEventListener('pagehide', () => this.save());
     // the popup and the side panel share one saved game: when the other view saves, follow it
     window.addEventListener('storage', (e) => {
-      if (e.key === 'dhumbal.game' && e.newValue && !this.animating && !this.flight) {
+      if (e.key === 'dhumbal.game' && e.newValue && !this.online && !this.animating && !this.flight) {
         clearTimeout(this.pendingBot); this.pendingBot = null;
         this.token += 1;
         if (this.resume(true)) this.requestRender();
@@ -148,13 +163,14 @@ class App {
     // Brave doesn't show Chrome's extension side panel, so there we open a slim window instead
     this.isBrave = false;
     globalThis.navigator?.brave?.isBrave?.().then((yes) => { this.isBrave = !!yes; this.requestRender(); }).catch(() => {});
-    if (!this.resume()) this.setup.open();
+    if (store.get('online', null)?.code) this.resumeOnline();
+    else if (!this.resume()) this.setup.open();
     this.requestRender();
   }
 
   // ---------- save and resume: the toolbar popup is destroyed whenever it closes ----------
   save() {
-    if (!this.match) return;
+    if (!this.match || this.online) return;     // an online game lives on the server
     store.set('game', { match: saveMatch(this.match), autoFinished: this.autoFinished });
   }
 
@@ -259,6 +275,195 @@ class App {
     }
   }
 
+  // ---------- playing with friends online ----------
+  /** Set up the connection; the server's messages go to onNet. */
+  connectOnline() {
+    this.leaveLocal();
+    this.online = new OnlineClient(store, {
+      onMessage: (msg) => this.onNet(msg),
+      onFatal: (message) => this.onlineEnded(message),
+      onStatus: (status) => {
+        if (status === 'reconnecting') this.toast('Connection lost: reconnecting… (a bot plays for you meanwhile)');
+        this.requestRender();
+      },
+    });
+    return this.online;
+  }
+
+  /** Stop showing the game against bots (it stays saved for later). */
+  leaveLocal() {
+    this.save();
+    clearTimeout(this.pendingBot);
+    this.pendingBot = null;
+    this.token += 1;
+    this.animating = this.shuffling = this.dealing = false;
+    this.flight = this.shuffleAnim = null;
+    this.match = this.game = null;
+    this.hidden = new Set();
+    this.netQueue = [];
+    this.netBusy = this.netWaiting = false;
+  }
+
+  resumeOnline() {
+    this.connectOnline().resume();
+    this.toast('Reconnecting to your table…');
+  }
+
+  async createTable(settings, name) {
+    const online = this.connectOnline();
+    try {
+      await online.create(settings, name);
+    } catch (e) {
+      online.forget();
+      this.online = null;
+      throw e;
+    }
+  }
+
+  joinTable(code, name) { this.connectOnline().join(code, name); }
+
+  /** Leave the table you're at (a bot finishes the game for you) and go back to the start. */
+  leaveTable() {
+    this.online?.leave();
+    this.onlineEnded(null);
+  }
+
+  /** The table is gone (left, expired, or refused): back to the New game dialog. */
+  onlineEnded(message) {
+    this.online?.forget();
+    this.online = null;
+    this.room = null;
+    this.leaveLocal();
+    this.lobby.close();
+    if (!this.resume(true)) this.setup.open(message);
+    else if (message) this.toast(message);
+    this.requestRender();
+  }
+
+  onNet(msg) {
+    if (msg.type === 'room') {
+      this.room = msg.room;
+      if (msg.room.status === 'lobby' && !this.match) this.lobby.open();
+      else this.lobby.close();
+      this.lobby.paint();
+      this.requestRender();
+    } else if (msg.type === 'event') {
+      this.netQueue.push(msg);
+      this.pumpNet();
+    } else if (msg.type === 'sync') {
+      this.syncNet(msg.view);
+    } else if (msg.type === 'error') {
+      this.netWaiting = false;
+      this.toast(msg.message);
+      this.sfx('nope');
+      this.lobby.paint(msg.message);
+    }
+  }
+
+  /** Jump straight to the server's state (reconnecting, or back to the lobby). */
+  syncNet(view) {
+    this.token += 1;
+    this.netQueue = [];
+    this.netBusy = this.netWaiting = false;
+    this.animating = this.shuffling = this.dealing = false;
+    this.flight = this.shuffleAnim = null;
+    this.hidden = new Set();
+    this.match = view ? loadMatch(view) : null;
+    this.game = this.match?.game ?? null;
+    if (!this.match && this.room?.status === 'lobby') this.lobby.open();
+    else this.lobby.close();
+    if (this.myTurn()) this.sfx('turn');
+    this.requestRender();
+  }
+
+  pumpNet() {
+    if (this.netBusy) return;
+    const msg = this.netQueue.shift();
+    if (!msg) { this.requestRender(); return; }
+    this.netBusy = true;
+    const token = this.token;
+    this.applyNet(msg.event, loadMatch(msg.view), () => {
+      if (token !== this.token) return;
+      this.netBusy = false;
+      this.pumpNet();
+    });
+  }
+
+  /** Animate one thing that happened at the table, then adopt the server's new state. */
+  applyNet(ev, fresh, done) {
+    const before = this.game;
+    if (ev.kind === 'deal' || !before) {
+      this.match = fresh; this.game = fresh.game;
+      this.lobby.close();
+      this.netWaiting = false;
+      if (ev.kind !== 'deal') { this.hidden = new Set(); done(); return; }
+      this.hidden = new Set(Object.values(this.game.hands).flat());
+      this.dealing = true;
+      this.toast('Shuffling the deck…');
+      this.shuffle(() => { this.toast('Dealing…'); this.deal(() => { this.afterDeal(); done(); }); });
+      return;
+    }
+    const name = ev.actor, mine = name === HUMAN;
+    if (mine) this.netWaiting = false;
+    // where things are before the move: the mover's cards, and the throw they may pick from
+    const hand = before.hands[name] ?? [];
+    const spots = hand.map((c, k) => this.cardPos(name, k, hand.length));
+    const prev = before.previousPlayer(name), prevShown = this.shownThrow(prev);
+    this.match = fresh; this.game = fresh.game;
+
+    const throwThen = (next) => {
+      const origins = {};
+      ev.thrown.forEach((c, j) => { origins[c] = spots[mine ? hand.indexOf(c) : j] ?? spots[0] ?? this.deckPos(); });
+      this.flyThrow(name, ev.thrown, origins, next);
+    };
+    const pickThen = (next) => {
+      const pick = ev.pick;
+      if (pick.card === null && !pick.hidden) { next(); return; }      // the deck ran out a second time
+      const origin = pick.fromFloor
+        ? this.discardPos(this.seatOf(prev), Math.max(0, prevShown.indexOf(pick.card)), prevShown.length)
+        : this.deckPos();
+      const newHand = this.game.hands[name];
+      const inHand = newHand[newHand.length - 1];
+      this.flyPick(name, { ...pick, card: inHand }, origin, pick.fromFloor, next,
+        pick.fromFloor || mine ? pick.card : null);
+    };
+    const finish = (message = '') => {
+      if (message) this.toast(message);
+      if (this.game.over) this.endRound(); else this.scheduleBots();
+      done();
+    };
+    const took = (pick) => (pick.fromFloor ? `took ${cardText(pick.card)} from the floor` : 'drew from the deck');
+
+    switch (ev.kind) {
+      case 'pass':
+        if (!mine) this.toast(`${name} didn't call Salami`);
+        finish();
+        break;
+      case 'call':
+        finish();
+        break;
+      case 'throw':
+        throwThen(() => { this.scheduleBots(); done(); });
+        break;
+      case 'pick':
+        pickThen(() => finish(mine ? '' : `${name} ${took(ev.pick)}`));
+        break;
+      case 'turn':          // a stand-in bot's whole turn, for someone who is away
+        if (ev.passed || (ev.showdown && !ev.thrown)) { finish(); break; }
+        throwThen(() => pickThen(() => finish(
+          ev.pick.card === null && !ev.pick.hidden ? '' : `${name} threw ${describe(ev.thrown)} and ${took(ev.pick)}`)));
+        break;
+      default:
+        done();
+    }
+  }
+
+  /** Is this player away right now (a stand-in bot plays for them)? */
+  isAway(name) {
+    return !!this.room?.members.find((m) => m.name === name && !m.connected);
+  }
+  get hostName() { return this.room?.members.find((m) => m.host)?.name ?? 'the host'; }
+
   // ---------- sound ----------
   sfx(name) { this.sounds.play(name); }
   later(ms, fn) { return setTimeout(fn, this.animations ? ms : 0); }
@@ -311,7 +516,7 @@ class App {
   endRound() {
     let summary = this.match.finishRound();
     const match = this.match;
-    if (match.mode === RACE && summary.knockedOut.includes(HUMAN) && !match.over) {
+    if (!this.online && match.mode === RACE && summary.knockedOut.includes(HUMAN) && !match.over) {
       // you're out: the bots play the rest of the race instantly, then the winner is shown
       const wentOut = summary.number;
       while (!match.over) {
@@ -451,7 +656,8 @@ class App {
   // ---------- turn flow ----------
   myTurn(phase = null) {
     const g = this.game;
-    return !!g && !g.over && !this.animating && g.currentPlayer === HUMAN && (phase === null || g.phase === phase);
+    return !!g && !g.over && !this.animating && !this.netBusy && !this.netWaiting
+      && g.currentPlayer === HUMAN && (phase === null || g.phase === phase);
   }
 
   jokerClick(card) {
@@ -468,6 +674,7 @@ class App {
   throwCard(card, { alone = false, joker = null } = {}) {
     if (!this.myTurn(THROW) || !this.game.hands[HUMAN].includes(card)) return;
     if (alone) joker = null;
+    if (this.online) { this.sendMove({ type: 'throw', card, alone, joker }); return; }
     const hand = this.game.hands[HUMAN];
     const before = Object.fromEntries(hand.map((c, k) => [c, this.handPos(k, hand.length)]));
     const thrown = this.game.throw(HUMAN, card, { alone, joker });
@@ -485,13 +692,15 @@ class App {
     this.animate(moves, () => { thrown.forEach((c) => this.hidden.delete(c)); this.requestRender(); onDone(); });
   }
 
-  flyPick(name, result, origin, faceUp, onDone) {
+  /** `shown`: the face to show in flight, when it differs from the card in the hand (online,
+   *  another player's hand holds placeholders). */
+  flyPick(name, result, origin, faceUp, onDone, shown = undefined) {
     const hand = this.game.hands[name];
     this.hidden.add(result.card);
     const fly = () => {
       this.sfx('pick');
       const to = this.cardPos(name, hand.length - 1, hand.length);
-      const card = faceUp || name === HUMAN ? result.card : null;
+      const card = shown !== undefined ? shown : faceUp || name === HUMAN ? result.card : null;
       this.animate([{ card, from: origin, to, size: name === HUMAN ? BIG : MID }], () => {
         this.hidden.delete(result.card);
         this.requestRender();
@@ -509,6 +718,7 @@ class App {
     if (!this.myTurn(PICK) || (fromFloor && !game.pickables.length)) return;
     card = card ?? (fromFloor ? game.pickable : null);
     if (fromFloor && !game.pickables.includes(card)) return;
+    if (this.online) { this.sendMove({ type: 'pick', fromFloor, card }); return; }
     let origin = this.deckPos();
     if (fromFloor) {
       const prev = game.previousPlayer(HUMAN), shown = this.shownThrow(prev);
@@ -522,6 +732,7 @@ class App {
 
   onCall() {
     if (this.game && !this.animating && this.game.canCall(HUMAN)) {
+      if (this.online) { if (this.myTurn()) this.sendMove({ type: 'call' }); return; }
       this.game.call(HUMAN);
       this.endRound();
     }
@@ -529,15 +740,27 @@ class App {
 
   onPlayOn() {
     if (this.myTurn(OPENING)) {
+      if (this.online) { this.sendMove({ type: 'pass' }); return; }
       this.game.passOpening(HUMAN);
       this.scheduleBots();
     }
+  }
+
+  /** Online: send a move and wait for the server to confirm it (it comes back as an event). */
+  sendMove(msg) {
+    if (!this.online.send(msg)) { this.toast('Not connected to the table yet, try again in a moment'); this.sfx('nope'); return; }
+    this.netWaiting = true;
+    this.requestRender();
   }
 
   scheduleBots() {
     const g = this.game;
     this.save();
     this.requestRender();
+    if (this.online) {                  // the server plays for anyone who is away
+      if (g && !g.over && g.currentPlayer === HUMAN) this.sfx('turn');
+      return;
+    }
     if (g && !g.over && g.currentPlayer !== HUMAN) {
       this.pendingBot = this.later(this.botDelayMs, () => this.botStep());
     } else if (g && !g.over) {
@@ -729,7 +952,8 @@ class App {
     const offers = canPick ? game.pickables : this.myTurn(THROW) ? game.availablePicks() : [];
 
     const mode = this.match.mode === QUICK ? 'Quick game' : `Race to ${RACE_LIMIT}`;
-    const info = `${mode}  ·  ${this.match.seats.length} players  ·  ${game.jokers} joker${game.jokers > 1 ? 's' : ''} (0 pts)  ·  call at ${game.callLimit} or less (Salami ${OPENING_CALL_LIMIT})`;
+    const table = this.online && this.room && !PORTRAIT ? `Table ${this.room.code}  ·  ` : '';
+    const info = `${table}${mode}  ·  ${this.match.seats.length} players  ·  ${game.jokers} joker${game.jokers > 1 ? 's' : ''} (0 pts)  ·  call at ${game.callLimit} or less (Salami ${OPENING_CALL_LIMIT})`;
     this.wrap(info, PORTRAIT ? W - 40 : 640, font(12)).forEach((ln, i) =>
       this.text(ln, 22, u(20) + i * u(16), { size: 12, color: MUTED, align: 'left' }));
 
@@ -823,13 +1047,15 @@ class App {
     const color = AVATAR_COLORS[(index - 1) % AVATAR_COLORS.length];
     if (y < 140) {
       const half = ((result ? 26 : 16) * (hand.length - 1)) / 2 + size[0] / 2;
-      this.drawAvatar(x - half - u(30), y, 'B' + name.slice(-1), color, isTurn, isWinner);
+      this.drawAvatar(x - half - u(30), y, initials(name), color, isTurn, isWinner);
     } else {
-      this.drawAvatar(x, y - u(result ? 62 : 46), 'B' + name.slice(-1), color, isTurn, isWinner);
+      this.drawAvatar(x, y - u(result ? 62 : 46), initials(name), color, isTurn, isWinner);
     }
     const below = y + u(result ? 46 : 32);
     this.text(name + (result && result.caller === name ? '  · called' : ''), x, below, { size: 13, bold: true, color: isTurn || isWinner ? GOLD : TEXT });
+    const away = this.online && this.isAway(name);
     if (result) this.text(this.resultNote(name), x, below + u(18), { size: 12 });
+    else if (away) this.text(isTurn ? 'away · a bot is playing…' : 'away · a bot plays for them', x, below + u(17), { size: 11, color: OUT_RED });
     else if (isTurn) this.text('thinking…', x, below + u(17), { size: 11, color: MUTED });
   }
 
@@ -847,7 +1073,7 @@ class App {
 
   drawOutSeat(index, name) {
     const [x, y] = this.botSeat(index);
-    this.drawAvatar(x, y - u(46), 'B' + name.slice(-1), '#4a5668', false, false);
+    this.drawAvatar(x, y - u(46), initials(name), '#4a5668', false, false);
     this.text('OUT', x, y - u(6), { size: 14, bold: true, color: OUT_RED });
     this.text(`${name}  ·  ${this.match.scores[name]}`, x, y + u(32), { size: 12, bold: true, color: MUTED });
   }
@@ -857,7 +1083,7 @@ class App {
     if (PORTRAIT && !game.players.includes(HUMAN)) {
       this.drawAvatar(36, HAND_Y - 92, 'You', '#4a5668', false, false, 18);
       this.text(`OUT  ·  ${this.match.scores[HUMAN]}`, 66, HAND_Y - 92, { size: 13, bold: true, color: OUT_RED, align: 'left' });
-      this.text(this.match.over ? 'You were knocked out of the race.' : "You're out. Watching the bots…",
+      this.text(this.match.over ? 'You were knocked out of the race.' : `You're out. Watching the ${this.online ? 'others' : 'bots'}…`,
         CX, HAND_Y, { size: 14, bold: true, color: MUTED });
       return;
     }
@@ -865,7 +1091,7 @@ class App {
       const lx = CX - 290;
       this.drawAvatar(lx, HAND_Y - u(26), 'You', '#4a5668', false, false, 24);
       this.text(`OUT  ·  ${this.match.scores[HUMAN]}`, lx, HAND_Y + u(14), { size: 13, bold: true, color: OUT_RED });
-      this.text(this.match.over ? 'You were knocked out of the race.' : "You're out of the race. Watching the bots…",
+      this.text(this.match.over ? 'You were knocked out of the race.' : `You're out of the race. Watching the ${this.online ? 'others' : 'bots'}…`,
         CX + 40, HAND_Y, { size: 15, bold: true, color: MUTED });
       return;
     }
@@ -1005,7 +1231,12 @@ class App {
       }
       y += 4;
     }
-    if (match.mode === RACE && !match.over) { ops.push(['next', y + u(2)]); y += u(44); }
+    const host = !this.online || this.room?.isHost;
+    if (this.online && !host) {
+      line(match.over ? `${this.hostName} can set up another game at this table`
+        : `Waiting for ${this.hostName} to deal the next round…`, 12, true, GOLD, 4);
+    } else if (match.mode === RACE && !match.over) { ops.push(['next', y + u(2)]); y += u(44); }
+    else if (this.online) { ops.push(['again', y + u(2)]); y += u(44); }
     else line('Press New game to play again', 11, false, MUTED, 4);
 
     const height = y + 28;
@@ -1017,7 +1248,8 @@ class App {
     for (const op of ops) {
       if (op[0] === 'text') this.text(op[1], op[2], op[3] + oy, op[4]);
       else if (op[0] === 'line') { c.beginPath(); c.moveTo(op[1], op[2] + oy); c.lineTo(op[3], op[2] + oy); c.strokeStyle = '#2a4466'; c.lineWidth = 1; c.stroke(); }
-      else if (op[0] === 'next') this.drawButton('Continue to next round', CX, op[1] + oy + u(16), { primary: true, anchor: 'center', onClick: () => { this.sfx('click'); this.startRound(); } });
+      else if (op[0] === 'next') this.drawButton('Continue to next round', CX, op[1] + oy + u(16), { primary: true, anchor: 'center', onClick: () => { this.sfx('click'); if (this.online) this.online.send({ type: 'next' }); else this.startRound(); } });
+      else if (op[0] === 'again') this.drawButton('Play again at this table', CX, op[1] + oy + u(16), { primary: true, anchor: 'center', onClick: () => { this.sfx('click'); this.online.send({ type: 'again' }); } });
     }
   }
 
@@ -1037,13 +1269,14 @@ class App {
   drawBar() {
     const game = this.game;
     let left = 20;
-    left += this.drawButton(PORTRAIT ? 'New' : 'New game', left, BAR_Y, { onClick: () => { this.sfx('click'); this.setup.open(); } }) + 8;
+    if (this.online) left += this.drawButton(PORTRAIT ? 'Leave' : 'Leave table', left, BAR_Y, { onClick: () => { this.sfx('click'); this.leaveTable(); } }) + 8;
+    else left += this.drawButton(PORTRAIT ? 'New' : 'New game', left, BAR_Y, { onClick: () => { this.sfx('click'); this.setup.open(); } }) + 8;
     const soundLabel = !this.sounds.available ? '♪ No sound' : PORTRAIT ? (this.sounds.enabled ? '♪' : '♪ off')
       : this.sounds.enabled ? '♪ Sound on' : '♪ Sound off';
     left += this.drawButton(soundLabel, left, BAR_Y, { enabled: this.sounds.available, onClick: () => this.toggleSound() }) + 14;
     const callLabel = this.myTurn(OPENING) ? 'Call Salami' : PORTRAIT ? 'Call showdown'
       : this.match?.mode === RACE ? 'Call showdown · end round' : 'Call showdown · end game';
-    const canCall = !!game && game.canCall(HUMAN) && !this.animating;
+    const canCall = !!game && game.canCall(HUMAN) && !this.animating && !this.netBusy && !this.netWaiting;
     let right = W - 20 - this.drawButton(callLabel, W - 20, BAR_Y, { primary: true, enabled: canCall, anchor: 'right', onClick: () => this.onCall() }) - 14;
     if (this.myTurn(OPENING)) {
       right -= this.drawButton('Play on', right + 6, BAR_Y, { anchor: 'right', onClick: () => { this.sfx('click'); this.onPlayOn(); } }) + 8;
@@ -1066,8 +1299,12 @@ class App {
 
   statusText() {
     const game = this.game;
-    if (!game) return 'Press New game to start.';
+    if (!game) return this.online ? (this.online.connected ? 'Waiting for the game to start…' : 'Connecting to the table…') : 'Press New game to start.';
     const match = this.match;
+    if (game.over && this.online) {
+      if (!this.room?.isHost) return match.over ? `Game over. ${this.hostName} can start another game at this table.` : `Round over. Waiting for ${this.hostName} to deal the next round.`;
+      return match.over ? 'Game over. Press Play again to start another game at this table.' : "Round over. Press Continue to next round when everyone's ready.";
+    }
     if (game.over) {
       if (match.over) return match.winners.length ? `Game over: ${wins(match.winners)}! Press New game to play again.` : 'Game over: no winner. Press New game to play again.';
       return "Round over. Press Continue to next round when you're ready.";
@@ -1075,8 +1312,11 @@ class App {
     if (this.shuffling) return 'Shuffling…';
     if (this.dealing) return 'Dealing…';
     if (!game.players.includes(HUMAN)) return `You're out. ${game.currentPlayer} is playing…`;
-    if (game.currentPlayer !== HUMAN) return `${game.currentPlayer} is playing…`;
-    if (this.animating) return '';
+    if (game.currentPlayer !== HUMAN) {
+      return this.online && this.isAway(game.currentPlayer) ? `${game.currentPlayer} is away: a bot is playing for them…` : `${game.currentPlayer} is playing…`;
+    }
+    if (this.animating || this.netBusy) return '';
+    if (this.netWaiting) return 'Sending…';
     if (game.phase === OPENING) return `Salami: your hand is ${game.total(HUMAN)} (${OPENING_CALL_LIMIT} or less). Call Salami before anyone throws (if you're not caught, everyone else gets +${SALAMI_BONUS}), or Play on.`;
     if (game.phase === PICK) {
       if (game.pickables.length > 1) return 'Pick up: click the deck, or any one of the gold cards.';
@@ -1099,12 +1339,16 @@ const MODE_INFO = {
   [RACE]: `Rounds until one player is left. The round winner scores 0, everyone else adds their hand total. Reach ${RACE_LIMIT} and you're out; the last one standing wins.`,
 };
 
+const BOTS = 'bots', FRIENDS = 'friends';
+
 class SetupDialog {
   constructor(app) {
     this.app = app;
     this.el = document.getElementById('setup');
     this.values = {};
+    this.busy = false;
     const rows = [
+      ['opponents', [[BOTS, 'Bots'], [FRIENDS, 'Friends online']]],
       ['mode', [[QUICK, 'Quick game'], [RACE, `Race to ${RACE_LIMIT}`]]],
       ['players', Array.from({ length: MAX_PLAYERS - MIN_PLAYERS + 1 }, (_, i) => [MIN_PLAYERS + i, String(MIN_PLAYERS + i)])],
       ['jokers', [[1, '1'], [2, '2']]],
@@ -1122,13 +1366,23 @@ class SetupDialog {
       }
     }
     this.el.querySelector('#opening-note').textContent = `Before the first throw of a round, anyone with ${OPENING_CALL_LIMIT} or less may call Salami: if they're not caught, everyone else gets +${SALAMI_BONUS}.`;
+    this.nameInput = this.el.querySelector('#player-name');
+    this.codeInput = this.el.querySelector('#join-code');
+    this.errorEl = this.el.querySelector('#online-error');
+    this.codeInput.addEventListener('input', () => {
+      this.codeInput.value = this.codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    });
+    this.codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); this.join(); } });
+    this.el.querySelector('#join').addEventListener('click', () => this.join());
     this.el.querySelector('#deal').addEventListener('click', () => this.start());
     this.el.querySelector('#cancel').addEventListener('click', () => this.close());
     this.el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); this.start(); }
+      if (e.key === 'Enter' && e.target !== this.codeInput) { e.preventDefault(); this.start(); }
       if (e.key === 'Escape') { e.preventDefault(); this.close(); }
     });
   }
+
+  get online() { return this.values.opponents === FRIENDS; }
 
   paint() {
     for (const box of this.el.querySelectorAll('[data-choice]')) {
@@ -1136,11 +1390,29 @@ class SetupDialog {
       for (const b of box.children) b.classList.toggle('on', b.dataset.value === String(this.values[key]));
     }
     this.el.querySelector('#mode-info').textContent = MODE_INFO[this.values.mode];
+    this.el.querySelector('#online-fields').hidden = !this.online;
+    this.el.querySelector('#players-label').textContent = this.online ? 'Players at the table (you + friends)' : 'Players (you + bots)';
+    this.el.querySelector('#rules-note').textContent = this.online
+      ? 'Creating a table? These rules apply to everyone at it.' : 'These rules apply to every player for the whole game.';
+    const deal = this.el.querySelector('#deal');
+    deal.textContent = this.online ? (this.busy ? 'Creating…' : 'Create table') : 'Deal';
+    deal.disabled = this.busy;
+    this.el.querySelector('#cancel').hidden = !this.app.game;
   }
 
-  open() {
+  showError(message) {
+    this.errorEl.textContent = message || '';
+    this.errorEl.hidden = !message;
+  }
+
+  open(message = null) {
     const s = this.app.settings;
-    this.values = { mode: s.mode, players: s.players, jokers: s.jokers, callLimit: s.callLimit };
+    this.values = {
+      opponents: s.opponents ?? BOTS, mode: s.mode, players: s.players, jokers: s.jokers, callLimit: s.callLimit,
+    };
+    if (message) this.values.opponents = FRIENDS;
+    this.nameInput.value = store.get('name', '');
+    this.showError(message);
     this.paint();
     this.el.hidden = false;
     this.el.querySelector('#deal').focus();
@@ -1148,10 +1420,120 @@ class SetupDialog {
 
   close() { this.el.hidden = true; this.app.requestRender(); }
 
-  start() {
+  rules() {
+    const { mode, players, jokers, callLimit } = this.values;
+    return { mode, players, jokers, callLimit };
+  }
+
+  /** Your name for online play, or null (with a message) if it's missing. */
+  playerName() {
+    const name = this.nameInput.value.trim();
+    if (!name) { this.showError('Enter your name first, so your friends know who you are.'); this.nameInput.focus(); return null; }
+    store.set('name', name);
+    return name;
+  }
+
+  remember() {
+    this.app.settings = { ...this.rules(), opponents: this.values.opponents };
+    store.set('settings', this.app.settings);
+  }
+
+  async start() {
+    if (this.busy) return;
     this.app.sounds.unlock();
+    this.remember();
+    if (!this.online) {
+      this.close();
+      this.app.startGame({ ...this.rules() });
+      return;
+    }
+    const name = this.playerName();
+    if (!name) return;
+    this.busy = true;
+    this.showError(null);
+    this.paint();
+    try {
+      await this.app.createTable(this.rules(), name);
+      this.close();
+    } catch (e) {
+      this.showError(e.message);
+    } finally {
+      this.busy = false;
+      this.paint();
+    }
+  }
+
+  join() {
+    this.app.sounds.unlock();
+    this.remember();
+    const name = this.playerName();
+    if (!name) return;
+    const code = this.codeInput.value.trim().toUpperCase();
+    if (code.length !== 4) { this.showError('A table code has 4 letters and numbers, like K7QX.'); this.codeInput.focus(); return; }
+    this.showError(null);
     this.close();
-    this.app.startGame({ ...this.values });
+    this.app.joinTable(code, name);
+  }
+}
+
+// ---------- the lobby: waiting for friends to join an online table ----------
+class LobbyDialog {
+  constructor(app) {
+    this.app = app;
+    this.el = document.getElementById('lobby');
+    this.message = '';
+    this.el.querySelector('#lobby-leave').addEventListener('click', () => { this.app.sfx('click'); this.app.leaveTable(); });
+    this.el.querySelector('#lobby-start').addEventListener('click', () => {
+      this.app.sounds.unlock();
+      this.app.sfx('click');
+      this.app.online?.send({ type: 'start' });
+    });
+    this.el.querySelector('#copy-code').addEventListener('click', async () => {
+      const code = this.app.room?.code;
+      if (!code) return;
+      try { await navigator.clipboard.writeText(code); this.paint('Code copied: paste it to your friends.'); } catch { this.paint(`Your table code is ${code}.`); }
+    });
+  }
+
+  open() { if (this.el.hidden) { this.message = ''; this.el.hidden = false; } this.paint(); }
+  close() { this.el.hidden = true; }
+
+  paint(message = null) {
+    if (message !== null) this.message = message;
+    const room = this.app.room;
+    if (!room || this.el.hidden) return;
+    const s = room.settings;
+    this.el.querySelector('#lobby-code').textContent = room.code;
+    this.el.querySelector('#lobby-rules').textContent = `${s.mode === QUICK ? 'Quick game' : `Race to ${RACE_LIMIT}`}  ·  `
+      + `${s.players} players  ·  ${s.jokers} joker${s.jokers > 1 ? 's' : ''}  ·  call at ${s.callLimit} or less`;
+    const list = this.el.querySelector('#lobby-members');
+    list.replaceChildren();
+    for (let k = 0; k < s.players; k++) {
+      const m = room.members[k], li = document.createElement('li');
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      li.appendChild(dot);
+      const label = document.createElement('span');
+      if (m) {
+        label.textContent = m.you ? `${this.app.online ? store.get('name', 'You') : 'You'} (you)` : m.name;
+        if (!m.connected) li.classList.add('away');
+      } else {
+        label.textContent = 'Waiting for a friend…';
+        li.classList.add('open');
+      }
+      li.appendChild(label);
+      if (m?.host) { const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = 'host'; li.appendChild(tag); }
+      list.appendChild(li);
+    }
+    const missing = s.players - room.members.length;
+    const start = this.el.querySelector('#lobby-start');
+    start.hidden = !room.isHost;
+    start.disabled = missing > 0;
+    const host = room.members.find((m) => m.host)?.name ?? 'the host';
+    const status = missing > 0 ? `Waiting for ${missing} more player${missing > 1 ? 's' : ''}…`
+      : room.isHost ? 'Everyone is here. Press Start to deal!' : `Everyone is here. Waiting for ${host} to start…`;
+    this.el.querySelector('#lobby-status').textContent = this.message || status;
+    this.message = '';
   }
 }
 

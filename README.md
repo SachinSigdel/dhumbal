@@ -89,13 +89,44 @@ To install it unpacked:
 2. Click **Load unpacked** and choose the `extension` folder.
 3. Pin the Dhumbal icon from the puzzle-piece menu and click it.
 
-Its only permission is `sidePanel`, and it works offline. The same files also run as a web page: serve the
+Its only permission is `sidePanel`, and playing against bots works offline. The same files also run as a web page: serve the
 folder with `python3 -m http.server --directory extension` and open
 `http://localhost:8000/game.html` (add `?popup` for the 800x600 pop-up size, or `?panel` for the side panel).
 
+### Playing with friends online
+
+In the New game dialog, choose **Play against: Friends online**, enter your name, set the rules
+and press **Create table**. You get a 4-letter code (like `K7QX`) to send to your friends; they
+choose **Friends online**, type the code and press **Join**. The host picks how many players sit
+at the table (2 to 5), and the game starts when everyone has joined and the host presses
+**Start**. In a race the host deals each next round, and after a game **Play again at this table**
+takes everyone back to the lobby.
+
+The server deals and keeps every hand, so nobody can peek at another player's cards (each player
+is only ever sent their own hand), and it shuffles with cryptographic randomness. If someone
+closes the game or loses their connection, a bot plays their turns until they come back: opening
+Dhumbal again reconnects them to the table automatically. The side panel (or the Brave window) is
+the best place to play online, since the toolbar pop-up closes whenever you click away.
+
+The server lives in `server/`: a Cloudflare Worker with one Durable Object per table, running the
+same rules engine as the extension (`extension/js/game.js`). To run it yourself:
+
+```bash
+cd server && npm install
+npx wrangler dev                 # local server on http://127.0.0.1:8787
+npx wrangler deploy              # deploy to your Cloudflare account (after `npx wrangler login`)
+```
+
+The extension connects to the server named in `extension/js/online.js` (`DEFAULT_SERVER`).
+To point one browser at a local server instead, run
+`localStorage.setItem('dhumbal.server', '"http://127.0.0.1:8787"')` in the game page's console.
+
 Tests (need Node): `node extension/tests/engine.test.mjs` runs the rule tests and a
 save/resume check; `extension/tests/crosscheck.mjs` compares the JavaScript engine with the
-Python one on hands exported from Python.
+Python one on hands exported from Python. `node server/test/room.test.mjs` plays hundreds of
+online games through the room logic and checks that nobody is ever sent a card they shouldn't
+see; `node server/test/live.test.mjs [server URL]` plays over real WebSockets against a running
+server.
 
 ## Code layout
 
@@ -107,4 +138,5 @@ Python one on hands exported from Python.
 | `gui.py`    | tkinter window interface                                  |
 | `sound.py`  | Synthesised sound effects for the window                  |
 | `dhumbal.py`| Launcher                                                  |
-| `extension/`| Chrome extension (Dhumbal): `js/cards.js`, `js/game.js` (engine), `js/app.js` (table), `js/sound.js`, `cards/` (card art) |
+| `extension/`| Chrome extension (Dhumbal): `js/cards.js`, `js/game.js` (engine), `js/app.js` (table), `js/online.js` (connection), `js/sound.js`, `cards/` (card art) |
+| `server/`   | Online play: `src/index.js` (Worker and Durable Object), `src/room.js` (tables, lobby, hidden hands) |

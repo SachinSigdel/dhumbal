@@ -13,13 +13,29 @@
   <div id="setup" class="backdrop" hidden>
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="setup-title">
       <h1 id="setup-title">♠ ♥ &nbsp;Dhumbal&nbsp; ♦ ♣</h1>
-      <p class="muted">These rules apply to every player for the whole game.</p>
+
+      <h2>Play against</h2>
+      <div class="choices" data-choice="opponents"></div>
+
+      <div id="online-fields" hidden>
+        <h2><label for="player-name">Your name</label></h2>
+        <input id="player-name" type="text" maxlength="16" autocomplete="nickname" placeholder="So your friends know it's you">
+        <h2><label for="join-code">Join a friend's table</label></h2>
+        <div class="row">
+          <input id="join-code" type="text" maxlength="4" autocomplete="off" spellcheck="false" placeholder="CODE">
+          <button id="join" type="button" class="pill">Join</button>
+        </div>
+        <p class="muted small">Or set the rules below and create a table of your own.</p>
+      </div>
+      <p id="online-error" class="error small" hidden></p>
+
+      <p class="muted" id="rules-note">These rules apply to every player for the whole game.</p>
 
       <h2>Game</h2>
       <div class="choices" data-choice="mode"></div>
       <p id="mode-info" class="muted small"></p>
 
-      <h2>Players (you + bots)</h2>
+      <h2 id="players-label">Players (you + bots)</h2>
       <div class="choices" data-choice="players"></div>
 
       <h2>Jokers (worth 0 points)</h2>
@@ -32,6 +48,22 @@
       <div class="actions">
         <button id="cancel" type="button" class="pill">Cancel</button>
         <button id="deal" type="button" class="pill primary">Deal</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="lobby" class="backdrop" hidden>
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="lobby-title">
+      <h1 id="lobby-title">Table <span id="lobby-code" class="code"></span></h1>
+      <p class="muted">Send this code to your friends. They open Dhumbal, choose <b>Friends online</b> and join with it.</p>
+      <div class="row"><button id="copy-code" type="button" class="pill">Copy code</button></div>
+      <p id="lobby-rules" class="muted small"></p>
+      <h2>At the table</h2>
+      <ul id="lobby-members"></ul>
+      <p id="lobby-status" class="small"></p>
+      <div class="actions">
+        <button id="lobby-leave" type="button" class="pill">Leave</button>
+        <button id="lobby-start" type="button" class="pill primary">Start</button>
       </div>
     </div>
   </div>

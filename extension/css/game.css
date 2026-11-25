@@ -106,3 +106,64 @@ html.popup .dialog {
 }
 
 html.popup h2 { margin: 10px 0 5px; }
+
+/* ---------- playing online ---------- */
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+input[type="text"] {
+  font: 15px var(--font);
+  color: var(--text);
+  background: #13233a;
+  border: 1px solid #2a4466;
+  border-radius: 10px;
+  padding: 8px 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+input[type="text"]:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: transparent; }
+#join-code { width: 7.5em; text-transform: uppercase; letter-spacing: 0.2em; font-weight: bold; }
+.error { color: #f2a0a0; margin-top: 10px; }
+.error[hidden], #online-fields[hidden] { display: none; }
+
+.code {
+  color: var(--text);
+  letter-spacing: 0.18em;
+  background: #13233a;
+  border-radius: 8px;
+  padding: 0 8px;
+}
+
+#lobby-members {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#lobby-members li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid #1c3350;
+  font-size: 15px;
+}
+
+#lobby-members li .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #6fcf97;
+  flex: none;
+}
+
+#lobby-members li.away .dot { background: #5d718a; }
+#lobby-members li.open { color: var(--muted); font-style: italic; }
+#lobby-members li.open .dot { background: transparent; border: 1px dashed #5d718a; }
+#lobby-members .tag { margin-left: auto; color: var(--gold); font-size: 12px; font-weight: bold; }
+#lobby-status { margin-top: 12px; color: var(--gold); }
