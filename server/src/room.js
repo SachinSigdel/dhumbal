@@ -23,6 +23,7 @@ export const BOT_DELAY_AFTER_DEAL_MS = 6000;
 // a dropped connection usually comes straight back (the extension reconnects in half a second):
 // only after this long is someone treated as away (lobby seat freed, host handed on, bot plays)
 export const GRACE_MS = 10000;
+const MESSAGE_TYPES = new Set(['start', 'next', 'again', 'leave', 'throw', 'pick', 'call', 'pass', 'ping']);
 
 /** Shuffles with the platform's cryptographic randomness, so the deck can't be predicted
  *  from a seed. Same interface as the engine's Rng. */
@@ -64,7 +65,10 @@ export function validSettings(s) {
 
 /** A display name: trimmed, at most 16 characters, never "You" or a bot's name, unique here. */
 function cleanName(raw, taken) {
-  let name = String(raw ?? '').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, MAX_NAME).trim();
+  // no control or text-direction characters (they could make one name look like another), and
+  // no leading "?" (hidden cards are written "?p1.0")
+  let name = String(raw ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+    .replace(/\s+/g, ' ').trim().replace(/^\?+/, '').trim().slice(0, MAX_NAME).trim();
   if (!name || name.toLowerCase() === YOU.toLowerCase() || /^bot\d$/i.test(name)) name = 'Player';
   const lower = new Set(taken.map((t) => t.toLowerCase()));
   if (!lower.has(name.toLowerCase())) return name;
@@ -76,10 +80,10 @@ function cleanName(raw, taken) {
 
 /** Replace every string (values and object keys) found in `map`. */
 function renameDeep(value, map) {
-  if (typeof value === 'string') return map[value] ?? value;
+  if (typeof value === 'string') return Object.hasOwn(map, value) ? map[value] : value;
   if (Array.isArray(value)) return value.map((v) => renameDeep(v, map));
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [map[k] ?? k, renameDeep(v, map)]));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [Object.hasOwn(map, k) ? map[k] : k, renameDeep(v, map)]));
   }
   return value;
 }
@@ -104,6 +108,7 @@ export class Room {
       match: null, botAt: null, settleAt: null, createdAt: now, touchedAt: now,
     });
     room.join(host.id, host.name);
+    room.members[0].awaySince = now;    // the host's connection is on its way: don't hand the table to whoever lands first
     return room;
   }
 
@@ -244,6 +249,7 @@ export class Room {
   handle(id, msg, now = this.now()) {
     const m = this.member(id);
     if (!m || !msg || typeof msg !== 'object') return;
+    if (!MESSAGE_TYPES.has(msg.type)) return this.error(id, 'Unknown message.');   // (changes nothing to save)
     this.data.touchedAt = now;
     try {
       switch (msg.type) {
@@ -299,8 +305,8 @@ export class Room {
     this.data.botAt = null;
     this.data.members = this.members.filter((x) => !x.left);
     this.members.forEach((x) => { x.seat = null; });
-    this.broadcastRoom();
     for (const x of this.members) this.send(x.id, { type: 'sync', view: null });
+    this.settle(this.now());   // anyone who dropped out and stayed away frees their seat (and updates everyone)
   }
 
   play(member, msg, now) {

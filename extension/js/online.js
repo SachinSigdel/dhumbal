@@ -6,6 +6,7 @@ export const DEFAULT_SERVER = 'https://dhumbal.dhumbal-server.workers.dev';
 
 const RETRY_MS = [500, 1000, 2000, 4000, 8000];
 const PING_MS = 25000;            // the server's host closes sockets that are quiet for ~80 s
+const DEAD_MS = 65000;            // no answer at all for this long (2+ pings): the connection is dead
 
 function randomId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -70,10 +71,16 @@ export class OnlineClient {
       this.connected = true;
       this.retries = 0;
       clearInterval(this.pingTimer);
-      this.pingTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('ping'); }, PING_MS);
+      this.lastHeard = Date.now();
+      this.pingTimer = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        if (Date.now() - this.lastHeard > DEAD_MS) { this.dropped(ws); return; }   // e.g. after the laptop slept
+        ws.send('ping');
+      }, PING_MS);
       this.handlers.onStatus?.('connected');
     };
     ws.onmessage = (e) => {
+      this.lastHeard = Date.now();
       if (e.data === 'pong') return;
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
@@ -84,17 +91,22 @@ export class OnlineClient {
       }
       this.handlers.onMessage(msg);
     };
-    ws.onclose = () => {
-      if (this.ws !== ws) return;
-      this.connected = false;
-      clearInterval(this.pingTimer);
-      if (this.closing || !this.code) return;
-      // dropped: try again, a little slower each time (a bot plays for you meanwhile)
-      const delay = RETRY_MS[Math.min(this.retries, RETRY_MS.length - 1)];
-      this.retries += 1;
-      this.handlers.onStatus?.('reconnecting');
-      this.retryTimer = setTimeout(() => { if (!this.closing && this.code) this.open(); }, delay);
-    };
+    ws.onclose = () => this.dropped(ws);
+  }
+
+  /** The connection `ws` is gone (or silently dead): reconnect, a little slower each time. */
+  dropped(ws) {
+    if (this.ws !== ws) return;
+    this.ws = null;
+    try { ws.close(); } catch { /* already closed */ }
+    this.connected = false;
+    clearInterval(this.pingTimer);
+    if (this.closing || !this.code) return;
+    // try again, a little slower each time (a bot plays for you meanwhile)
+    const delay = RETRY_MS[Math.min(this.retries, RETRY_MS.length - 1)];
+    this.retries += 1;
+    this.handlers.onStatus?.('reconnecting');
+    this.retryTimer = setTimeout(() => { if (!this.closing && this.code) this.open(); }, delay);
   }
 
   send(msg) {

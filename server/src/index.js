@@ -12,6 +12,15 @@ import { Room, isValidCode, isValidId, newCode, validSettings } from './room.js'
 
 const IDLE_MS = 24 * 60 * 60 * 1000;      // a table nobody is connected to is deleted after a day
 const MAX_MESSAGE = 2048;
+const MAX_MESSAGES = 100, MESSAGE_WINDOW_MS = 10000;  // per connection: far more than anyone can click
+
+/** Per-IP rate limits (Cloudflare's rate-limiting bindings, see wrangler.jsonc); true if allowed. */
+async function allowed(limiter, request, what) {
+  if (!limiter) return true;                // not configured (e.g. in tests)
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+  try { return (await limiter.limit({ key: `${what}:${ip}` })).success; } catch { return true; }
+}
+const tooMany = () => json({ error: 'Too many requests. Please wait a minute and try again.' }, 429);
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -29,6 +38,7 @@ export default {
     if (url.pathname === '/' || url.pathname === '/health') return json({ ok: true, service: 'dhumbal' });
 
     if (url.pathname === '/rooms' && request.method === 'POST') {
+      if (!(await allowed(env.CREATE_LIMITER, request, 'create'))) return tooMany();
       let body;
       try { body = await request.json(); } catch { return json({ error: 'Bad request.' }, 400); }
       const settings = validSettings(body?.settings);
@@ -46,6 +56,7 @@ export default {
 
     const match = url.pathname.match(/^\/rooms\/([A-Za-z0-9]+)(\/ws)?$/);
     if (match) {
+      if (!(await allowed(env.JOIN_LIMITER, request, 'join'))) return tooMany();
       const code = match[1].toUpperCase();
       if (!isValidCode(code)) return json({ error: 'No table with that code.' }, 404);
       const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
@@ -65,10 +76,23 @@ export class RoomObject extends DurableObject {
     // keep-alive: clients send "ping" every 25 s (idle sockets are closed after ~80 s); Cloudflare
     // answers "pong" itself without waking this object
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
-    ctx.blockConcurrencyWhile(async () => { this.data = (await ctx.storage.get('room')) ?? null; });
+    this.rates = new Map();    // socket -> recent message count (in memory only; fine to lose)
+    ctx.blockConcurrencyWhile(async () => {
+      this.data = (await ctx.storage.get('room')) ?? null;
+      // after a restart (a deploy, or Cloudflare moving the object) the sockets that closed meanwhile
+      // never reported it: anyone stored as connected without an open socket has dropped out
+      const room = this.room();
+      if (!room) return;
+      const open = new Set(ctx.getWebSockets().map((ws) => ws.deserializeAttachment()?.id).filter(Boolean));
+      const stale = room.members.filter((m) => m.connected && !open.has(m.id));
+      if (!stale.length) return;
+      for (const m of stale) room.disconnect(m.id);
+      await this.commit(room);
+    });
   }
 
-  room() { return this.data ? new Room(this.data) : null; }
+  /** The room, built from a copy of the stored state (so a failed update leaves no half-changes). */
+  room() { return this.data ? new Room(structuredClone(this.data)) : null; }
 
   /** Deliver the room's outbox, save it, and set the next alarm. */
   async commit(room) {
@@ -80,7 +104,9 @@ export class RoomObject extends DurableObject {
       }
     }
     room.outbox = [];
-    this.data = room.toJSON();
+    const next = room.toJSON();
+    if (JSON.stringify(next) === JSON.stringify(this.data)) return;   // nothing changed: no write
+    this.data = next;
     await this.ctx.storage.put('room', this.data);
     const wake = room.nextWake(IDLE_MS);
     if (wake) await this.ctx.storage.setAlarm(wake);
@@ -125,8 +151,15 @@ export class RoomObject extends DurableObject {
 
   async webSocketMessage(ws, raw) {
     const id = ws.deserializeAttachment()?.id;
+    if (!id || typeof raw !== 'string' || raw.length > MAX_MESSAGE) return;
+    const now = Date.now(), rate = this.rates.get(ws);
+    if (!rate || now - rate.since > MESSAGE_WINDOW_MS) this.rates.set(ws, { since: now, count: 1 });
+    else if (++rate.count > MAX_MESSAGES) {                            // flooding: refuse, cheaply
+      if (rate.count === MAX_MESSAGES + 1) ws.send(JSON.stringify({ type: 'error', message: 'Too many messages: slow down a little.' }));
+      return;
+    }
     const room = this.room();
-    if (!id || !room || typeof raw !== 'string' || raw.length > MAX_MESSAGE) return;
+    if (!room) return;
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
     room.handle(id, msg);

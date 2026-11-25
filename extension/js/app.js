@@ -159,7 +159,7 @@ class App {
     window.addEventListener('pagehide', () => this.save());
     // the popup and the side panel share one saved game: when the other view saves, follow it
     window.addEventListener('storage', (e) => {
-      if (e.key === 'dhumbal.game' && e.newValue && !this.online && !this.animating && !this.flight) {
+      if (e.key === 'dhumbal.game' && e.newValue && e.newValue !== 'null' && !this.online && !this.animating && !this.flight) {
         clearTimeout(this.pendingBot); this.pendingBot = null;
         this.token += 1;
         if (this.resume(true)) this.requestRender();
@@ -181,10 +181,15 @@ class App {
     store.set('game', { match: saveMatch(this.match), autoFinished: this.autoFinished });
   }
 
-  resume(quiet = false) {
+  /** `paused`: load it without letting the bots move (it's waiting behind the New game dialog). */
+  resume(quiet = false, paused = false) {
     const saved = store.get('game', null);
-    const match = saved && loadMatch(saved.match);
-    if (!match || !match.game) return false;
+    let match = null;
+    try { match = saved && loadMatch(saved.match); } catch { match = null; }
+    if (!match || !match.game || !match.game.hands || !Array.isArray(match.game.deck)) {
+      if (saved) store.set('game', null);   // unreadable: start fresh rather than show a blank page
+      return false;
+    }
     // an online game's copy (masked cards like "?p1.0") can't be played against bots: drop it
     const cards = [...match.game.deck, ...match.game.floor, ...Object.values(match.game.hands).flat()];
     if (cards.some((c) => typeof c !== 'string' || c.startsWith('?'))) { store.set('game', null); return false; }
@@ -195,7 +200,7 @@ class App {
       if (this.match.scoredGame !== this.game) this.match.finishRound();
     } else {
       if (!quiet) this.toast('Welcome back: your game is where you left it');
-      this.scheduleBots();
+      if (!paused) this.scheduleBots();
     }
     return true;
   }
@@ -264,13 +269,16 @@ class App {
       this.sfx('nope');
       return;
     }
-    const known = store.get('windowId', null);
-    if (known !== null) {
+    // already open? (window ids aren't kept across browser restarts, so look for the page itself)
+    const open = globalThis.chrome?.extension?.getViews?.()
+      .find((v) => v !== window && new URLSearchParams(v.location.search).has('window'));
+    if (open) {
       try {
-        await windows.update(known, { focused: true });   // already open: bring it to the front
+        const w = await open.chrome.windows.getCurrent();
+        await windows.update(w.id, { focused: true });
         window.close();
         return;
-      } catch { /* it was closed */ }
+      } catch { /* it just closed */ }
     }
     // a big window with the wide table, centred on the screen (it can be resized freely)
     const availW = screen.availWidth || 1440, availH = screen.availHeight || 900;
@@ -282,7 +290,6 @@ class App {
         left: Math.max(0, Math.round((screen.availLeft || 0) + (availW - width) / 2)),
         top: Math.max(0, Math.round((screen.availTop || 0) + (availH - height) / 2)), focused: true,
       });
-      store.set('windowId', w.id);
       window.close();
     } catch {
       this.toast("Couldn't open the game window");
@@ -316,6 +323,7 @@ class App {
     this.hidden = new Set();
     this.netQueue = [];
     this.netBusy = this.netWaiting = false;
+    this.autoFinished = null;
   }
 
   resumeOnline() {
@@ -330,6 +338,7 @@ class App {
     } catch (e) {
       online.forget();
       this.online = null;
+      this.resume(true, true);           // your game against bots is still there behind the dialog
       throw e;
     }
   }
@@ -350,6 +359,7 @@ class App {
     this.match = this.game = null;     // the online game must never be saved as a game against bots
     this.leaveLocal();
     this.lobby.close();
+    this.resume(true, true);           // your game against bots waits behind the dialog (Cancel returns to it)
     this.setup.open(message);          // back to the home screen
     this.requestRender();
   }
@@ -377,6 +387,7 @@ class App {
   /** Jump straight to the server's state (reconnecting, or back to the lobby). */
   syncNet(view) {
     this.token += 1;
+    this.autoFinished = null;
     this.netQueue = [];
     this.netBusy = this.netWaiting = false;
     this.animating = this.shuffling = this.dealing = false;
@@ -396,11 +407,20 @@ class App {
     if (!msg) { this.requestRender(); return; }
     this.netBusy = true;
     const token = this.token;
-    this.applyNet(msg.event, loadMatch(msg.view), () => {
+    const next = () => {
       if (token !== this.token) return;
       this.netBusy = false;
       this.pumpNet();
-    });
+    };
+    try {
+      this.applyNet(msg.event, loadMatch(msg.view), next);
+    } catch (e) {
+      // something unexpected: show the server's state as it is and carry on
+      console.error('Dhumbal: could not animate a move', e);
+      try { this.syncNet(msg.view); } catch { /* keep the last good state */ }
+      this.netBusy = false;
+      this.pumpNet();
+    }
   }
 
   /** Animate one thing that happened at the table, then adopt the server's new state. */
@@ -457,7 +477,7 @@ class App {
         finish();
         break;
       case 'throw':
-        throwThen(() => { this.scheduleBots(); done(); });
+        throwThen(() => { if (mine) this.requestRender(); else this.scheduleBots(); done(); });
         break;
       case 'pick':
         pickThen(() => finish(mine ? '' : `${name} ${took(ev.pick)}`));
@@ -768,6 +788,13 @@ class App {
     if (!this.online.send(msg)) { this.toast('Not connected to the table yet, try again in a moment'); this.sfx('nope'); return; }
     this.netWaiting = true;
     this.requestRender();
+  }
+
+  /** Online buttons that must only count once (Continue, Play again): ignore repeat clicks
+   *  until the server answers. */
+  sendOnce(msg) {
+    if (this.netWaiting) return;
+    if (this.online?.send(msg)) this.netWaiting = true;
   }
 
   scheduleBots() {
@@ -1287,8 +1314,8 @@ class App {
     for (const op of ops) {
       if (op[0] === 'text') this.text(op[1], op[2], op[3] + oy, op[4]);
       else if (op[0] === 'line') { c.beginPath(); c.moveTo(op[1], op[2] + oy); c.lineTo(op[3], op[2] + oy); c.strokeStyle = '#2a4466'; c.lineWidth = 1; c.stroke(); }
-      else if (op[0] === 'next') this.drawButton('Continue to next round', CX, op[1] + oy + u(16), { primary: true, anchor: 'center', onClick: () => { this.sfx('click'); if (this.online) this.online.send({ type: 'next' }); else this.startRound(); } });
-      else if (op[0] === 'again') this.drawButton('Play again at this table', CX, op[1] + oy + u(16), { primary: true, anchor: 'center', onClick: () => { this.sfx('click'); this.online.send({ type: 'again' }); } });
+      else if (op[0] === 'next') this.drawButton('Continue to next round', CX, op[1] + oy + u(16), { primary: true, anchor: 'center', onClick: () => { this.sfx('click'); if (this.online) this.sendOnce({ type: 'next' }); else this.startRound(); } });
+      else if (op[0] === 'again') this.drawButton('Play again at this table', CX, op[1] + oy + u(16), { primary: true, anchor: 'center', onClick: () => { this.sfx('click'); this.sendOnce({ type: 'again' }); } });
     }
   }
 
@@ -1434,7 +1461,7 @@ class SetupDialog {
     this.el.querySelector('#deal').addEventListener('click', () => this.start());
     this.el.querySelector('#cancel').addEventListener('click', () => this.close());
     this.el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.target !== this.codeInput && !e.target.closest?.('[role="tab"]')) {
+      if (e.key === 'Enter' && e.target !== this.codeInput && e.target.tagName !== 'BUTTON') {
         e.preventDefault();
         if (this.online && this.tab === JOIN) this.join(); else this.start();
       }
@@ -1496,7 +1523,13 @@ class SetupDialog {
     (this.online && this.tab === JOIN ? this.codeInput : this.el.querySelector('#deal')).focus();
   }
 
-  close() { this.el.hidden = true; this.app.requestRender(); }
+  close() {
+    this.el.hidden = true;
+    const app = this.app;
+    // a game against bots that waited behind the dialog carries on
+    if (app.game && !app.online && !app.game.over && !app.pendingBot && !app.animating && !app.dealing) app.scheduleBots();
+    app.requestRender();
+  }
 
   rules() {
     const { mode, players, jokers, callLimit } = this.values;
@@ -1521,7 +1554,7 @@ class SetupDialog {
     this.app.sounds.unlock();
     this.remember();
     if (!this.online) {
-      this.close();
+      this.el.hidden = true;             // (not close(): the old game shouldn't move on first)
       this.app.startGame({ ...this.rules() });
       return;
     }
@@ -1532,7 +1565,7 @@ class SetupDialog {
     this.paint();
     try {
       await this.app.createTable(this.rules(), name);
-      this.close();
+      this.el.hidden = true;
     } catch (e) {
       this.showError(e.message);
     } finally {
@@ -1549,7 +1582,7 @@ class SetupDialog {
     const code = this.codeInput.value.trim().toUpperCase();
     if (code.length !== 4) { this.showError('A table code has 4 letters and numbers, like K7QX.'); this.codeInput.focus(); return; }
     this.showError(null);
-    this.close();
+    this.el.hidden = true;
     this.app.joinTable(code, name);
   }
 }
@@ -1571,6 +1604,9 @@ class LobbyDialog {
         return;
       }
       this.app.sfx('click');
+      const start = this.el.querySelector('#lobby-start');
+      if (start.disabled) return;
+      start.disabled = true;               // until the server answers (the lobby closes, or an error comes back)
       this.app.online?.send({ type: 'start' });
     });
     this.el.querySelector('#copy-code').addEventListener('click', async () => {
@@ -1615,6 +1651,7 @@ class LobbyDialog {
     const start = this.el.querySelector('#lobby-start');
     start.hidden = !room.isHost;
     start.classList.toggle('waiting', missing > 0);   // still clickable: it explains why it can't start
+    start.disabled = false;
     const host = room.members.find((m) => m.host)?.name ?? 'the host';
     const status = missing > 0 ? `Waiting for ${missing} more player${missing > 1 ? 's' : ''}…`
       : room.isHost ? 'Everyone is here. Press Start to deal!' : `Everyone is here. Waiting for ${host} to start…`;

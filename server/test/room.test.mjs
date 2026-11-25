@@ -83,6 +83,9 @@ test('settings, codes and names', () => {
   const room = Room.create('ABCD', validSettings({ players: 5, jokers: 1, mode: 'quick', callLimit: 5 }), { id: ids[0], name: 'Sam' });
   room.join(ids[1], 'sam'); room.join(ids[2], 'You'); room.join(ids[3], 'Bot2'); room.join(ids[4], '  a\u0007very long name indeed!!  ');
   assert.deepEqual(room.members.map((m) => m.name), ['Sam', 'sam 2', 'Player', 'Player 2', 'avery long name']);
+  const r2 = Room.create('ABCD', validSettings({ players: 3, jokers: 1, mode: 'quick', callLimit: 5 }), { id: ids[0], name: 'Ra\u202ejesh' });
+  r2.join(ids[1], '??d0'); r2.join(ids[2], 'constructor');
+  assert.deepEqual(r2.members.map((m) => m.name), ['Rajesh', 'd0', 'constructor'], 'no direction tricks, no "?" names');
 });
 
 test('lobby: full table, host-only start, start needs everyone', () => {
@@ -244,6 +247,34 @@ test('storage round trip mid-game keeps playing identically', () => {
   const copy = withClock(new Room(JSON.parse(JSON.stringify(room.toJSON()))));
   assert.deepEqual(copy.viewFor(ids[2]), room.viewFor(ids[2]));
   assert.equal(copy.match.rng.constructor.name, 'CryptoRng');
+});
+
+test('play again frees the seat of someone who dropped out and stayed away', () => {
+  const room = lobby(validSettings({ players: 3, jokers: 1, mode: 'quick', callLimit: 15 }));
+  room.handle(ids[0], { type: 'start' });
+  room.disconnect(ids[2]);
+  later(room, GRACE_MS + 1);
+  let guard = 0;
+  while (!room.match.over && guard++ < 5000) {
+    if (room.data.botAt) { clock = room.data.botAt; room.tick(clock); continue; }
+    const g = room.match.game, m = room.memberBySeat(g.currentPlayer);
+    room.handle(m.id, g.phase === 'opening' ? { type: 'pass' } : g.phase === 'throw' ? (g.canCall(g.currentPlayer) ? { type: 'call' } : { type: 'throw', card: g.hands[g.currentPlayer][0] }) : { type: 'pick', fromFloor: false });
+  }
+  assert.ok(room.match.over);
+  drain(room);
+  room.handle(room.data.hostId, { type: 'again' });
+  assert.deepEqual(room.members.map((m) => m.id), [ids[0], ids[1]], 'the absent player no longer holds a seat');
+  assert.equal(room.join(ids[3], 'D'), null, 'a newcomer can take the seat');
+  room.handle(ids[0], { type: 'wat' });
+  assert.match(drain(room).pop().msg.message, /Unknown message/);
+});
+
+test('the host keeps the table while their own connection is on its way', () => {
+  const room = withClock(Room.create('ABCD', validSettings({ players: 2, jokers: 1, mode: 'quick', callLimit: 5 }), { id: ids[0], name: 'Host' }, clock));
+  room.join(ids[1], 'Fast'); room.connect(ids[1]);
+  assert.equal(room.data.hostId, ids[0]);
+  room.connect(ids[0]);
+  assert.equal(room.data.hostId, ids[0]);
 });
 
 test('play again returns everyone to the lobby', () => {
