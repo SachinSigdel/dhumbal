@@ -178,6 +178,9 @@ class App {
     const saved = store.get('game', null);
     const match = saved && loadMatch(saved.match);
     if (!match || !match.game) return false;
+    // an online game's copy (masked cards like "?p1.0") can't be played against bots: drop it
+    const cards = [...match.game.deck, ...match.game.floor, ...Object.values(match.game.hands).flat()];
+    if (cards.some((c) => typeof c !== 'string' || c.startsWith('?'))) { store.set('game', null); return false; }
     this.match = match;
     this.game = match.game;
     this.autoFinished = saved.autoFinished ?? null;
@@ -333,10 +336,10 @@ class App {
     this.online?.forget();
     this.online = null;
     this.room = null;
+    this.match = this.game = null;     // the online game must never be saved as a game against bots
     this.leaveLocal();
     this.lobby.close();
-    if (!this.resume(true)) this.setup.open(message);
-    else if (message) this.toast(message);
+    this.setup.open(message);          // back to the home screen
     this.requestRender();
   }
 
@@ -994,7 +997,21 @@ class App {
         const label = PORTRAIT ? (canPick ? 'pick one' : game.floorUnlocked.has(HUMAN) ? 'available' : 'locked')
           : canPick ? (offers.length > 1 ? 'pick any one of these' : 'you can pick this')
           : game.floorUnlocked.has(HUMAN) ? 'available to pick' : 'pickable once you throw|a double or sequence';
-        label.split('|').forEach((ln, j, all) => this.text(ln, tx, ty - MID[1] / 2 - u(14) - (all.length - 1 - j) * u(14), { size: 11, bold: true, color: GOLD }));
+        const lines = label.split('|'), style = { size: 11, bold: true, color: GOLD };
+        if (ty < CY - 1 && Math.abs(tx - CX) < RX * 0.3) {
+          // the seat at the top of the table: above the cards would cover the player's name and
+          // hand, and below them the messages in the middle, so the label sits beside the cards
+          const half = (u(24) * (thrown.length - 1)) / 2 + MID[0] / 2 + u(10);
+          const right = tx <= CX + 1;
+          lines.forEach((ln, j) => this.text(ln, right ? tx + half : tx - half,
+            ty + (j - (lines.length - 1) / 2) * u(14), { ...style, align: right ? 'left' : 'right' }));
+        } else {
+          // upper side seats: line the label up with the cards' outer edge, clear of the player's hand
+          const side = ty < CY - 1 ? Math.sign(tx - CX) : 0;
+          const edge = (u(24) * (thrown.length - 1)) / 2 + MID[0] / 2;
+          lines.forEach((ln, j) => this.text(ln, tx + side * edge, ty - MID[1] / 2 - u(14) - (lines.length - 1 - j) * u(14),
+            { ...style, align: side > 0 ? 'right' : side < 0 ? 'left' : 'center' }));
+        }
       }
     }
 
