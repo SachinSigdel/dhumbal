@@ -20,16 +20,23 @@
       <div id="online-fields" hidden>
         <h2><label for="player-name">Your name</label></h2>
         <input id="player-name" type="text" maxlength="16" autocomplete="nickname" placeholder="So your friends know it's you">
-        <h2><label for="join-code">Join a friend's table</label></h2>
-        <div class="row">
-          <input id="join-code" type="text" maxlength="4" autocomplete="off" spellcheck="false" placeholder="CODE">
-          <button id="join" type="button" class="pill">Join</button>
-        </div>
-        <p class="muted small">Or set the rules below and create a table of your own.</p>
+
+        <section class="box">
+          <h3>Join a game</h3>
+          <p class="muted small">Got a table code from a friend? Enter it here.</p>
+          <div class="row">
+            <input id="join-code" type="text" maxlength="4" autocomplete="off" spellcheck="false" placeholder="CODE" aria-label="Table code">
+            <button id="join" type="button" class="pill primary">Join</button>
+          </div>
+        </section>
+
+        <div class="or"><span>or</span></div>
       </div>
       <p id="online-error" class="error small" hidden></p>
 
-      <p class="muted" id="rules-note">These rules apply to every player for the whole game.</p>
+      <section id="rules-box">
+      <h3 id="create-title" hidden>Create a game</h3>
+      <p class="muted small" id="rules-note">These rules apply to every player for the whole game.</p>
 
       <h2>Game</h2>
       <div class="choices" data-choice="mode"></div>
@@ -49,6 +56,7 @@
         <button id="cancel" type="button" class="pill">Cancel</button>
         <button id="deal" type="button" class="pill primary">Deal</button>
       </div>
+      </section>
     </div>
   </div>
 

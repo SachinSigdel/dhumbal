@@ -955,10 +955,18 @@ class App {
     const offers = canPick ? game.pickables : this.myTurn(THROW) ? game.availablePicks() : [];
 
     const mode = this.match.mode === QUICK ? 'Quick game' : `Race to ${RACE_LIMIT}`;
-    const table = this.online && this.room && !PORTRAIT ? `Table ${this.room.code}  ·  ` : '';
-    const info = `${table}${mode}  ·  ${this.match.seats.length} players  ·  ${game.jokers} joker${game.jokers > 1 ? 's' : ''} (0 pts)  ·  call at ${game.callLimit} or less (Salami ${OPENING_CALL_LIMIT})`;
-    this.wrap(info, PORTRAIT ? W - 40 : 640, font(12)).forEach((ln, i) =>
-      this.text(ln, 22, u(20) + i * u(16), { size: 12, color: MUTED, align: 'left' }));
+    // top left: the table code (online) and the few rules worth a glance
+    let infoX = 18;
+    const infoY = u(20);
+    if (this.online && this.room) {
+      c.font = font(11, true);
+      const tw = c.measureText(this.room.code).width + u(16), th = u(20);
+      this.rrect(infoX, infoY - th / 2, infoX + tw, infoY + th / 2, th / 2); c.fillStyle = PILL; c.fill();
+      this.text(this.room.code, infoX + tw / 2, infoY + 1, { size: 11, bold: true, color: GOLD });
+      infoX += tw + u(8);
+    }
+    const info = `${mode}  ·  call at ${game.callLimit} or less  ·  ${game.jokers} joker${game.jokers > 1 ? 's' : ''}`;
+    this.text(info, infoX, infoY, { size: 12, color: MUTED, align: 'left' });
 
     // centre: deck and floor
     const [dx, dy] = this.deckPos(), fx = CX + u(44), hw = MID[0] / 2, hh = MID[1] / 2;
@@ -1410,7 +1418,10 @@ class SetupDialog {
     this.el.querySelector('#online-fields').hidden = !this.online;
     this.el.querySelector('#players-label').textContent = this.online ? 'Players at the table (you + friends)' : 'Players (you + bots)';
     this.el.querySelector('#rules-note').textContent = this.online
-      ? 'Creating a table? These rules apply to everyone at it.' : 'These rules apply to every player for the whole game.';
+      ? "Choose the rules for everyone at your table. You'll get a code to send your friends."
+      : 'These rules apply to every player for the whole game.';
+    this.el.querySelector('#rules-box').classList.toggle('box', this.online);
+    this.el.querySelector('#create-title').hidden = !this.online;
     const deal = this.el.querySelector('#deal');
     deal.textContent = this.online ? (this.busy ? 'Creating…' : 'Create table') : 'Deal';
     deal.disabled = this.busy;
