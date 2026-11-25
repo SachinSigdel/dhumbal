@@ -5,7 +5,12 @@
 import assert from 'node:assert/strict';
 import { HUMAN, OPENING, PICK, THROW, loadMatch } from '../../extension/js/game.js';
 import { Rng } from '../../extension/js/cards.js';
-import { Room, validSettings, isValidCode, newCode } from '../src/room.js';
+import { GRACE_MS, Room, validSettings, isValidCode, newCode } from '../src/room.js';
+
+// a fake clock, so grace periods and bot timers can be fast-forwarded
+let clock = 1_000_000;
+const withClock = (room) => { room.now = () => clock; return room; };
+const later = (room, ms) => { clock += ms; room.tick(clock); };
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed += 1; console.log(`ok - ${name}`); };
@@ -39,7 +44,7 @@ function checkPrivacy(out) {
 }
 
 function lobby(settings, n = settings.players) {
-  const room = Room.create('ABCD', settings, { id: ids[0], name: names[0] });
+  const room = withClock(Room.create('ABCD', settings, { id: ids[0], name: names[0] }, clock));
   room.connect(ids[0]);
   for (let k = 1; k < n; k++) { assert.equal(room.join(ids[k], names[k]), null); room.connect(ids[k]); }
   drain(room);
@@ -81,7 +86,7 @@ test('settings, codes and names', () => {
 });
 
 test('lobby: full table, host-only start, start needs everyone', () => {
-  const room = Room.create('ABCD', validSettings({ players: 3, jokers: 1, mode: 'quick', callLimit: 5 }), { id: ids[0], name: 'A' });
+  const room = withClock(Room.create('ABCD', validSettings({ players: 3, jokers: 1, mode: 'quick', callLimit: 5 }), { id: ids[0], name: 'A' }, clock));
   room.connect(ids[0]);
   room.join(ids[1], 'B'); room.connect(ids[1]);
   drain(room);
@@ -101,8 +106,15 @@ test('lobby: full table, host-only start, start needs everyone', () => {
   // someone leaving the lobby frees their seat; the host moves on if the host goes
   const r2 = lobby(validSettings({ players: 3, jokers: 1, mode: 'quick', callLimit: 5 }), 2);
   r2.disconnect(ids[0]);
+  assert.equal(r2.members.length, 2, 'a dropped connection keeps its seat for a moment');
+  assert.equal(r2.data.hostId, ids[0]);
+  r2.connect(ids[0]);                     // a quick reconnect changes nothing
+  r2.disconnect(ids[0]);
+  later(r2, GRACE_MS + 1);
   assert.equal(r2.members.length, 1);
   assert.equal(r2.data.hostId, ids[1]);
+  r2.leave(ids[1]);                       // leaving on purpose frees the seat at once
+  assert.equal(r2.members.length, 0);
 });
 
 test('acting out of turn or illegally is refused', () => {
@@ -134,9 +146,11 @@ function playGame(settings, seed, { dropOut = false } = {}) {
     if (match.over) break;
     if (match.game.over) {              // race: the host deals the next round
       room.handle(room.data.hostId, { type: 'next' });
-    } else if (room.data.botAt) {
-      room.botStep();
-      botMoves += 1;
+    } else if (room.data.botAt || room.data.settleAt) {
+      const before = room.match.game.turns + room.match.game.floor.length;
+      clock = Math.max(clock, Math.min(...[room.data.botAt, room.data.settleAt].filter((t) => t)));
+      room.tick(clock);
+      if (room.match.game.turns + room.match.game.floor.length !== before || room.match.game.over) botMoves += 1;
     } else {
       // somebody drops out for a while, then comes back
       if (dropOut && !dropped && rng.random() < 0.02) {
@@ -194,6 +208,7 @@ test('nobody connected: the bot waits; reconnecting gets a sync', () => {
   room.handle(ids[0], { type: 'start' });
   drain(room);
   room.disconnect(ids[0]); room.disconnect(ids[1]);
+  later(room, GRACE_MS + 1);
   assert.equal(room.data.botAt, null);
   assert.ok(room.nextWake(1000) > 0);
   room.connect(ids[1]);
@@ -202,11 +217,31 @@ test('nobody connected: the bot waits; reconnecting gets a sync', () => {
   checkPrivacy(out);
 });
 
+test('a blip during a game: no bot unless they stay away', () => {
+  const room = lobby(validSettings({ players: 2, jokers: 1, mode: 'quick', callLimit: 5 }));
+  room.handle(ids[0], { type: 'start' });
+  drain(room);
+  const current = room.memberBySeat(room.match.game.currentPlayer);
+  room.disconnect(current.id);
+  assert.equal(room.data.botAt, null, 'no bot during the grace period');
+  assert.ok(room.data.settleAt);
+  later(room, 2000);
+  room.connect(current.id);
+  later(room, GRACE_MS * 2);
+  assert.equal(room.data.botAt, null, 'came back in time: still their turn');
+  assert.equal(room.match.game.currentPlayer, current.seat);
+  room.disconnect(current.id);
+  later(room, GRACE_MS + 1);
+  assert.ok(room.data.botAt, 'stayed away: a bot is due');
+  const info = drain(room).filter((o) => o.msg.type === 'room' && o.to !== current.id).pop().msg.room;
+  assert.equal(info.members.find((m) => !m.you).connected, false);
+});
+
 test('storage round trip mid-game keeps playing identically', () => {
   const room = lobby(validSettings({ players: 4, jokers: 2, mode: 'race', callLimit: 10 }));
   room.handle(ids[0], { type: 'start' });
   drain(room);
-  const copy = new Room(JSON.parse(JSON.stringify(room.toJSON())));
+  const copy = withClock(new Room(JSON.parse(JSON.stringify(room.toJSON()))));
   assert.deepEqual(copy.viewFor(ids[2]), room.viewFor(ids[2]));
   assert.equal(copy.match.rng.constructor.name, 'CryptoRng');
 });

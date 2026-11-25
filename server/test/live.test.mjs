@@ -14,7 +14,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const randomId = () => `test-${crypto.randomUUID()}`;
 
 class Client {
-  constructor(name) { this.name = name; this.id = randomId(); this.view = null; this.room = null; this.errors = []; this.events = []; }
+  constructor(name) { this.name = name; this.id = randomId(); this.view = null; this.room = null; this.errors = []; this.events = []; this.version = 0; this.blips = 0; }
   connect(code) {
     this.code = code;
     return new Promise((resolve, reject) => {
@@ -22,15 +22,18 @@ class Client {
       this.ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
         if (msg.type === 'room') { this.room = msg.room; resolve(); }
-        else if (msg.type === 'event') { this.view = msg.view; this.events.push(msg.event); }
-        else if (msg.type === 'sync') this.view = msg.view;
+        else if (msg.type === 'event') { this.view = msg.view; this.events.push(msg.event); this.version += 1; }
+        else if (msg.type === 'sync') { this.view = msg.view; this.version += 1; }
         else if (msg.type === 'error') { this.errors.push(msg.message); if (msg.fatal) reject(new Error(msg.message)); }
       };
       this.ws.onerror = () => reject(new Error('socket error'));
+      const ws = this.ws;
+      // like the extension: a dropped connection reconnects at once (the server keeps the seat)
+      ws.onclose = () => { if (!this.closing && this.ws === ws) { this.blips += 1; setTimeout(() => this.connect(code).catch(() => {}), 300); } };
     });
   }
   send(msg) { this.ws.send(JSON.stringify(msg)); }
-  close() { this.ws.close(); }
+  close() { this.closing = true; this.ws.close(); }
 }
 
 async function until(fn, what, ms = 20000) {
@@ -79,9 +82,9 @@ async function play(settings, { dropOut = false } = {}) {
     if (m.over) break;
     if (m.game.over) {
       const host = live.find((p) => p.room.isHost);
-      const before = host.events.length;
+      const before = host.version;
       host.send({ type: 'next' });
-      await until(() => host.events.length > before, 'the next round');
+      await until(() => host.version > before, 'the next round');
       continue;
     }
     if (dropOut && !dropped && m.game.turns >= 2) {
@@ -93,19 +96,21 @@ async function play(settings, { dropOut = false } = {}) {
     if (dropOut && dropped && !back && c.events.length && a.events.filter((e) => e.kind === 'turn').length >= 2) {
       back = true;
       c.view = null;
+      c.closing = false;
       await c.connect(code);
       await until(() => c.view, 'the resync');
       continue;
     }
     const mover = live.find((p) => decide(p.view));
     if (!mover) {             // a stand-in bot is due: wait for the server's timer
-      const before = a.events.length;
-      await until(() => a.events.length > before, 'a bot move');
+      const before = a.version;
+      await until(() => a.version > before, 'a bot move');
       continue;
     }
-    const before = mover.events.length;
+    const before = mover.version;
+    if (mover.ws.readyState !== WebSocket.OPEN) { await sleep(500); continue; }
     mover.send(decide(mover.view));
-    await until(() => mover.events.length > before || mover.errors.length, 'the move');
+    await until(() => mover.version > before || mover.errors.length, 'the move');
     assert.deepEqual(mover.errors, []);
   }
   // every hand was hidden from everyone else in every event
@@ -113,6 +118,8 @@ async function play(settings, { dropOut = false } = {}) {
     for (const e of p.events) if (e.pick && !e.pick.fromFloor && e.actor !== HUMAN) assert.equal(e.pick.card, null);
   }
   if (dropOut) assert.ok(a.events.some((e) => e.kind === 'turn'), 'a bot played for Chandra');
+  const blips = players.reduce((n, p) => n + p.blips, 0);
+  if (blips) console.log(`  (${blips} dropped connection${blips > 1 ? 's' : ''} reconnected along the way)`);
   players.forEach((p) => p.close());
   return loadMatch(a.view);
 }

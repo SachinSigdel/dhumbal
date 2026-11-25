@@ -20,6 +20,9 @@ const MAX_NAME = 16;
 // how long a stand-in bot waits before playing (the clients animate in between)
 export const BOT_DELAY_MS = 1500;
 export const BOT_DELAY_AFTER_DEAL_MS = 6000;
+// a dropped connection usually comes straight back (the extension reconnects in half a second):
+// only after this long is someone treated as away (lobby seat freed, host handed on, bot plays)
+export const GRACE_MS = 10000;
 
 /** Shuffles with the platform's cryptographic randomness, so the deck can't be predicted
  *  from a seed. Same interface as the engine's Rng. */
@@ -92,12 +95,13 @@ export class Room {
       if (this.match.game) this.match.game.rng = rng;
     }
     this.outbox = [];      // [{ to: memberId, msg }]
+    this.now = () => Date.now();   // tests replace the clock
   }
 
   static create(code, settings, host, now = Date.now()) {
     const room = new Room({
       v: ROOM_VERSION, code, settings, hostId: host.id, status: 'lobby', members: [],
-      match: null, botAt: null, createdAt: now, touchedAt: now,
+      match: null, botAt: null, settleAt: null, createdAt: now, touchedAt: now,
     });
     room.join(host.id, host.name);
     return room;
@@ -110,7 +114,11 @@ export class Room {
   get members() { return this.data.members; }
   member(id) { return this.members.find((m) => m.id === id) ?? null; }
   memberBySeat(seat) { return this.members.find((m) => m.seat === seat) ?? null; }
-  get connected() { return this.members.filter((m) => m.connected); }
+  /** Here, or dropped only moments ago (they're probably reconnecting). */
+  present(m) {
+    return m.connected || (!m.left && m.awaySince != null && this.now() - m.awaySince < GRACE_MS);
+  }
+  get connected() { return this.members.filter((m) => this.present(m)); }
 
   send(to, msg) { this.outbox.push({ to, msg }); }
   error(to, message) { this.send(to, { type: 'error', message }); }
@@ -124,47 +132,59 @@ export class Room {
     if (this.members.length >= this.data.settings.players) return 'This table is full.';
     this.members.push({
       id, name: cleanName(name, this.members.map((m) => m.name)), seat: null, connected: false, left: false,
+      awaySince: null,
     });
     return null;
   }
 
-  connect(id, now = Date.now()) {
+  connect(id, now = this.now()) {
     const m = this.member(id);
     if (!m) return;
     m.connected = true;
     m.left = false;
+    m.awaySince = null;
     this.data.touchedAt = now;
-    if (!this.member(this.data.hostId)?.connected) this.data.hostId = id;
+    const host = this.member(this.data.hostId);
+    if (!host || !this.present(host)) this.data.hostId = id;
     this.broadcastRoom();
     if (this.match) this.send(id, { type: 'sync', view: this.viewFor(id) });
     this.scheduleBot(now, BOT_DELAY_MS);
   }
 
-  disconnect(id, now = Date.now()) {
+  /** Their connection closed: give them GRACE_MS to come back before anything changes. */
+  disconnect(id, now = this.now()) {
     const m = this.member(id);
     if (!m) return;
     m.connected = false;
+    m.awaySince = m.left ? now - GRACE_MS : now;
     this.data.touchedAt = now;
-    if (this.data.status === 'lobby' && !this.match) {
-      // nobody has been dealt in yet: free the seat
-      this.data.members = this.members.filter((x) => x.id !== id);
-    }
-    this.passHost();
-    this.broadcastRoom();
-    this.scheduleBot(now, BOT_DELAY_MS);
+    this.settle(now);
   }
 
   /** Leaving on purpose: in the lobby the seat is freed; in a game a bot plays for you. */
-  leave(id, now = Date.now()) {
+  leave(id, now = this.now()) {
     const m = this.member(id);
     if (!m) return;
     m.left = true;
     this.disconnect(id, now);
   }
 
+  /** Apply what being away means for anyone whose grace period is over. */
+  settle(now = this.now()) {
+    if (this.data.status === 'lobby' && !this.match) {
+      // nobody has been dealt in yet: free the seats of people who are gone
+      this.data.members = this.members.filter((x) => this.present(x));
+    }
+    this.passHost();
+    const pending = this.members.filter((x) => !x.connected && this.present(x)).map((x) => x.awaySince + GRACE_MS);
+    this.data.settleAt = pending.length ? Math.min(...pending) : null;
+    this.broadcastRoom();
+    this.scheduleBot(now, BOT_DELAY_MS);
+  }
+
   passHost() {
     const host = this.member(this.data.hostId);
-    if (host?.connected) return;
+    if (host && this.present(host)) return;
     const next = this.connected[0];
     if (next) this.data.hostId = next.id;
   }
@@ -174,7 +194,7 @@ export class Room {
     return {
       code, settings, status,
       members: this.members.map((m) => ({
-        name: m.id === viewerId ? YOU : m.name, connected: m.connected, left: m.left,
+        name: m.id === viewerId ? YOU : m.name, connected: this.present(m), left: m.left,
         host: m.id === hostId, you: m.id === viewerId,
       })),
       isHost: viewerId === hostId,
@@ -221,7 +241,7 @@ export class Room {
   }
 
   // ---------- messages from a member ----------
-  handle(id, msg, now = Date.now()) {
+  handle(id, msg, now = this.now()) {
     const m = this.member(id);
     if (!m || !msg || typeof msg !== 'object') return;
     this.data.touchedAt = now;
@@ -313,15 +333,21 @@ export class Room {
     const game = this.match?.game;
     if (!game || game.over || !this.connected.length) return null;   // nobody watching: wait
     const member = this.memberBySeat(game.currentPlayer);
-    return member && !member.connected ? member.seat : null;
+    return member && !this.present(member) ? member.seat : null;
   }
 
   scheduleBot(now, delay) {
     this.data.botAt = this.botSeat() ? now + delay : null;
   }
 
-  /** Called when the timer fires. */
-  botStep(now = Date.now()) {
+  /** The Durable Object's alarm: settle anyone whose grace ran out, then a bot's move if due. */
+  tick(now = this.now()) {
+    if (this.data.settleAt && now >= this.data.settleAt) this.settle(now);
+    if (this.data.botAt && now >= this.data.botAt) this.botStep(now);
+  }
+
+  /** A stand-in bot's move. */
+  botStep(now = this.now()) {
     this.data.botAt = null;
     const seat = this.botSeat();
     if (!seat) return;
@@ -344,7 +370,8 @@ export class Room {
 
   /** When the Durable Object should wake up next (a bot's move, or tidying up an idle room). */
   nextWake(idleMs) {
-    if (this.data.botAt) return this.data.botAt;
+    const due = [this.data.botAt, this.data.settleAt].filter((t) => t);
+    if (due.length) return Math.min(...due);
     if (!this.connected.length) return this.data.touchedAt + idleMs;
     return null;
   }

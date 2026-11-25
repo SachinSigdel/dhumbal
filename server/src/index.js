@@ -62,6 +62,9 @@ export default {
 export class RoomObject extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
+    // keep-alive: clients send "ping" every 25 s (idle sockets are closed after ~80 s); Cloudflare
+    // answers "pong" itself without waking this object
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
     ctx.blockConcurrencyWhile(async () => { this.data = (await ctx.storage.get('room')) ?? null; });
   }
 
@@ -150,12 +153,8 @@ export class RoomObject extends DurableObject {
     const room = this.room();
     if (!room) return;
     const now = Date.now();
-    if (room.data.botAt && now >= room.data.botAt) {
-      room.botStep(now);
-      await this.commit(room);
-      return;
-    }
-    if (!room.connected.length && now >= room.data.touchedAt + IDLE_MS) {
+    room.tick(now);
+    if (!room.connected.length && !room.data.botAt && now >= room.data.touchedAt + IDLE_MS) {
       await this.ctx.storage.deleteAll();
       this.data = null;
       return;

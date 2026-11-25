@@ -2,9 +2,10 @@
 // The server deals and keeps the hands; this only sends your moves and passes what it hears
 // back to the table (app.js), which animates it.
 
-export const DEFAULT_SERVER = 'https://dhumbal.sachinsigdel.workers.dev';
+export const DEFAULT_SERVER = 'https://dhumbal.dhumbal-server.workers.dev';
 
 const RETRY_MS = [500, 1000, 2000, 4000, 8000];
+const PING_MS = 25000;            // the server's host closes sockets that are quiet for ~80 s
 
 function randomId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -65,8 +66,15 @@ export class OnlineClient {
     const url = `${this.server.replace(/^http/, 'ws')}/rooms/${this.code}/ws?id=${this.id}&name=${encodeURIComponent(name)}`;
     const ws = new WebSocket(url);
     this.ws = ws;
-    ws.onopen = () => { this.connected = true; this.retries = 0; this.handlers.onStatus?.('connected'); };
+    ws.onopen = () => {
+      this.connected = true;
+      this.retries = 0;
+      clearInterval(this.pingTimer);
+      this.pingTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('ping'); }, PING_MS);
+      this.handlers.onStatus?.('connected');
+    };
     ws.onmessage = (e) => {
+      if (e.data === 'pong') return;
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.type === 'error' && msg.fatal) {
@@ -79,6 +87,7 @@ export class OnlineClient {
     ws.onclose = () => {
       if (this.ws !== ws) return;
       this.connected = false;
+      clearInterval(this.pingTimer);
       if (this.closing || !this.code) return;
       // dropped: try again, a little slower each time (a bot plays for you meanwhile)
       const delay = RETRY_MS[Math.min(this.retries, RETRY_MS.length - 1)];
@@ -103,6 +112,7 @@ export class OnlineClient {
   forget() {
     this.closing = true;
     clearTimeout(this.retryTimer);
+    clearInterval(this.pingTimer);
     this.store.set('online', null);
     this.code = null;
     const ws = this.ws;
