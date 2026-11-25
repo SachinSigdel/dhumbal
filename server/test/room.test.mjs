@@ -91,7 +91,7 @@ test('lobby: full table, host-only start, start needs everyone', () => {
   room.join(ids[1], 'B'); room.connect(ids[1]);
   drain(room);
   room.handle(ids[0], { type: 'start' });
-  assert.match(drain(room).find((o) => o.msg.type === 'error').msg.message, /Waiting for 1 more player/);
+  assert.match(drain(room).find((o) => o.msg.type === 'error').msg.message, /Not enough players: waiting for 1 more to join/);
   room.join(ids[2], 'C'); room.connect(ids[2]);
   assert.equal(room.join(ids[3], 'D'), 'This table is full.');
   drain(room);
