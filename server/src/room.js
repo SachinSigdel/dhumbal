@@ -266,7 +266,8 @@ export class Room {
     if (this.data.status !== 'lobby') return this.error(id, 'The game has already started.');
     const { players, jokers, mode, callLimit } = this.data.settings;
     if (this.members.length !== players) {
-      return this.error(id, `Waiting for ${players - this.members.length} more player${players - this.members.length > 1 ? 's' : ''}.`);
+      const missing = players - this.members.length;
+      return this.error(id, `Not enough players: waiting for ${missing} more to join.`);
     }
     this.members.forEach((member, k) => { member.seat = `p${k}`; });
     this.match = new Match({ names: this.members.map((x) => x.seat), jokers, mode, callLimit, rng: new CryptoRng() });

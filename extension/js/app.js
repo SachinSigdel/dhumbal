@@ -356,7 +356,7 @@ class App {
       this.netWaiting = false;
       this.toast(msg.message);
       this.sfx('nope');
-      this.lobby.paint(msg.message);
+      this.lobby.paint(msg.message, true);
     }
   }
 
@@ -1485,6 +1485,13 @@ class LobbyDialog {
     this.el.querySelector('#lobby-leave').addEventListener('click', () => { this.app.sfx('click'); this.app.leaveTable(); });
     this.el.querySelector('#lobby-start').addEventListener('click', () => {
       this.app.sounds.unlock();
+      const room = this.app.room;
+      const missing = room ? room.settings.players - room.members.length : 0;
+      if (missing > 0) {
+        this.app.sfx('nope');
+        this.paint(`Not enough players: waiting for ${missing} more to join.`, true);
+        return;
+      }
       this.app.sfx('click');
       this.app.online?.send({ type: 'start' });
     });
@@ -1498,8 +1505,9 @@ class LobbyDialog {
   open() { if (this.el.hidden) { this.message = ''; this.el.hidden = false; } this.paint(); }
   close() { this.el.hidden = true; }
 
-  paint(message = null) {
-    if (message !== null) this.message = message;
+  /** `message` replaces the status line until the next change; `warn` shows it as a warning. */
+  paint(message = null, warn = false) {
+    if (message !== null) { this.message = message; this.warn = warn; }
     const room = this.app.room;
     if (!room || this.el.hidden) return;
     const s = room.settings;
@@ -1528,12 +1536,15 @@ class LobbyDialog {
     const missing = s.players - room.members.length;
     const start = this.el.querySelector('#lobby-start');
     start.hidden = !room.isHost;
-    start.disabled = missing > 0;
+    start.classList.toggle('waiting', missing > 0);   // still clickable: it explains why it can't start
     const host = room.members.find((m) => m.host)?.name ?? 'the host';
     const status = missing > 0 ? `Waiting for ${missing} more player${missing > 1 ? 's' : ''}…`
       : room.isHost ? 'Everyone is here. Press Start to deal!' : `Everyone is here. Waiting for ${host} to start…`;
-    this.el.querySelector('#lobby-status').textContent = this.message || status;
+    const line = this.el.querySelector('#lobby-status');
+    line.textContent = this.message || status;
+    line.classList.toggle('warn', !!this.message && this.warn);
     this.message = '';
+    this.warn = false;
   }
 }
 
