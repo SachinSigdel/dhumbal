@@ -1,8 +1,59 @@
 # Dhumbal
 
-A simple card game, played especially in Nepal. You play against 1 to 4 bots.
+A simple card game, played especially in Nepal. Play it with friends online, or against 1 to 4 bots.
 
 > Vibe-coded the whole game. 
+
+## Play online with friends
+
+Online play is in the Dhumbal browser extension (Chrome, Brave or another Chromium browser).
+Everyone at the table needs it installed: until it's on the Chrome Web Store, install it from
+this repository (see [Install the extension](#install-the-extension)).
+
+**Start a table (the host)**
+
+1. Click the Dhumbal icon in your browser's toolbar. If a game is already showing, press
+   **New game**.
+2. Under **Play against**, choose **Friends online**.
+3. Type your name: it's what the others see at the table.
+4. Choose the rules: **Quick game** or **Race to 100**, how many players (2 to 5, you
+   included), 1 or 2 jokers, and the call limit (5, 10 or 15).
+5. Press **Create table**. You get a 4-letter table code, like `K7QX`.
+6. Send the code to your friends (**Copy code** puts it on your clipboard), over chat or any
+   way you like.
+7. Watch the lobby fill up. When every seat is taken, press **Start** to deal.
+
+**Join a table (everyone else)**
+
+1. Click the Dhumbal icon (press **New game** if a game is showing) and choose **Friends online**.
+2. Type your name, then the table code under **Join a friend's table**, and press **Join**.
+3. Wait in the lobby until the host presses **Start**.
+
+**While you play**
+
+- You're always the player at the bottom of the table; your friends sit around it in turn
+  order, with their names. On your turn, play exactly as you would against bots: click a card
+  to throw it, then pick from the deck or the floor, or press **Call showdown** / **Call
+  Salami**.
+- Each player only ever sees their own cards. The server deals and keeps every hand, so
+  nobody can peek, not even with the browser's developer tools.
+- **Race to 100:** after each round the host presses **Continue to next round** (everyone else
+  sees "Waiting for … to deal the next round").
+- **After the game:** the host can press **Play again at this table** to take everyone back to
+  the lobby with the same code. Changing the rules means creating a new table.
+- **Leave table** (bottom left) leaves for good: a bot finishes your game for you.
+
+**Tips**
+
+- Play in the **side panel** (or, in Brave, the Dhumbal **window**): press **Open in side
+  panel** / **Open in a window** at the top right of the pop-up. The toolbar pop-up closes
+  whenever you click outside it, which disconnects you from the table.
+- Dropped out or closed the game by accident? Just open Dhumbal again: it reconnects you to
+  your table automatically and catches you up. If you're gone for more than about 10 seconds,
+  a bot plays your turns until you're back (the others see "away · a bot plays for them").
+- If the host leaves, the next player at the table becomes the host.
+- A table nobody is connected to is deleted after a day. A code that no longer works means
+  the table has expired: create a new one.
 
 ## Rules
 
@@ -16,8 +67,8 @@ player, bots included.
 - **Race to 100:** rounds are played until one player is left. Each round, the round
   winner scores 0 and everyone else adds their hand total to the score table (a caught
   caller adds 25 on top). Reaching 100
-  points knocks you out; the last player standing wins. If you are knocked out, the bots
-  finish the race at once and the winner is shown. The player seated after each round's
+  points knocks you out; the last player standing wins. Against bots, if you are knocked out the
+  bots finish the race at once and the winner is shown; online, you watch the others finish. The player seated after each round's
   winner starts the next round; the first round's starter is random.
 
 **A round**
@@ -83,6 +134,8 @@ doesn't show extension side panels, so there the button reads **Open in a window
 slim Dhumbal window instead (also used if the side panel ever fails). The pop-up, panel and
 window all share the same saved game.
 
+### Install the extension
+
 To install it unpacked:
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
@@ -93,22 +146,12 @@ Its only permission is `sidePanel`, and playing against bots works offline. The 
 folder with `python3 -m http.server --directory extension` and open
 `http://localhost:8000/game.html` (add `?popup` for the 800x600 pop-up size, or `?panel` for the side panel).
 
-### Playing with friends online
+### The online server
 
-In the New game dialog, choose **Play against: Friends online**, enter your name, set the rules
-and press **Create table**. You get a 4-letter code (like `K7QX`) to send to your friends; they
-choose **Friends online**, type the code and press **Join**. The host picks how many players sit
-at the table (2 to 5), and the game starts when everyone has joined and the host presses
-**Start**. In a race the host deals each next round, and after a game **Play again at this table**
-takes everyone back to the lobby.
-
-The server deals and keeps every hand, so nobody can peek at another player's cards (each player
-is only ever sent their own hand), and it shuffles with cryptographic randomness. If someone
-closes the game or loses their connection, a bot plays their turns until they come back: opening
-Dhumbal again reconnects them to the table automatically. The side panel (or the Brave window) is
-the best place to play online, since the toolbar pop-up closes whenever you click away.
-
-The server lives in `server/`: a Cloudflare Worker with one Durable Object per table, running the
+How to play online is described in [Play online with friends](#play-online-with-friends).
+The server deals and keeps every hand (each player is only ever sent their own), shuffles with
+cryptographic randomness, gives a dropped player 10 seconds to reconnect before a bot plays for
+them, and deletes tables that have been idle for a day. It lives in `server/`: a Cloudflare Worker with one Durable Object per table, running the
 same rules engine as the extension (`extension/js/game.js`). To run it yourself:
 
 ```bash
