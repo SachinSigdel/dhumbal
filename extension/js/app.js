@@ -15,8 +15,13 @@ import { Sounds } from './sound.js';
 // ---------- layout (same numbers as the Python window) ----------
 // Two layouts: a wide table (tab and toolbar popup) and a tall one for Chrome's narrow side panel.
 let W, H, CX, CY, RX, RY, HAND_Y, TOAST_Y, BAR_Y, DECK_Y, PORTRAIT = false;
+// how big cards, text and buttons are drawn (1 = the original size); the narrow side-panel
+// table has no room to spare, so it stays a little smaller
+let U, BIG, MID, SMALL;
 function applyLayout(portrait) {
   PORTRAIT = portrait;
+  U = portrait ? 1.15 : 1.25;
+  BIG = [72 * U, 104 * U]; MID = [52 * U, 76 * U]; SMALL = [30 * U, 44 * U];
   if (portrait) {
     W = 480; H = 970; CX = 240; CY = 380; RX = 196; RY = 290; HAND_Y = 812; BAR_Y = 940;
   } else {
@@ -43,9 +48,7 @@ const TEXT = '#f5efe0', MUTED = '#a9b8cc', PANEL = '#0b1626', OUT_RED = '#e07a7a
 const PILL = '#1c3350', AVATAR_INK = '#0e1a2b';
 const AVATAR_COLORS = ['#e07a5f', '#81b29a', '#f2cc8f', '#9d8df1'];
 
-const U = 1.15;                  // how big things are drawn (1 = the original size)
 const u = (n) => n * U;
-const BIG = [u(72), u(104)], MID = [u(52), u(76)], SMALL = [u(30), u(44)];
 
 const SHUFFLE_MS = 1800, DEAL_MS = 420, DEAL_GAP_MS = 120, MOVE_MS = 560, MOVE_GAP_MS = 110;
 const BOT_THINK_MS = 800, TOAST_MS = 2000, TOAST_FADE_MS = 650, FADE_IN_MS = 180;
