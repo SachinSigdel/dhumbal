@@ -103,8 +103,18 @@ async function play(settings, { dropOut = false } = {}) {
     }
     const mover = live.find((p) => decide(p.view));
     if (!mover) {             // a stand-in bot is due: wait for the server's timer
-      const before = a.version;
-      await until(() => a.version > before, 'a bot move');
+      // nobody's own copy says it's their turn: a stand-in bot is due, or some player's copy is
+      // still catching up with the last move, so wait for anyone's next update
+      const before = players.map((p) => p.version);
+      try {
+        await until(() => players.some((p, k) => p.version > before[k]), 'a bot move');
+      } catch (e) {
+        for (const p of players) {
+          const g = p.view && loadMatch(p.view).game;
+          console.log(`  ${p.name}: ws=${p.ws.readyState} blips=${p.blips} errors=${JSON.stringify(p.errors)} current=${g?.currentPlayer} phase=${g?.phase} over=${g?.over} turns=${g?.turns} room=${JSON.stringify(p.room?.members)}`);
+        }
+        throw e;
+      }
       continue;
     }
     const before = mover.version;
@@ -131,3 +141,4 @@ console.log(`ok - race with a drop-out and a stand-in bot: ${race.rounds.length}
 const missing = await fetch(`${BASE}/rooms/ZZZZ`);
 assert.equal(missing.status, 404);
 console.log('ok - unknown table code');
+process.exit(0);   // (reconnect timers would otherwise keep Node running)
