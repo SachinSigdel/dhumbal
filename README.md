@@ -16,7 +16,7 @@ this repository (see [Install the extension](#install-the-extension)).
    **New game**.
 2. Under **Play against**, choose **Friends online**.
 3. Type your name: it's what the others see at the table.
-4. Choose the rules: **Quick game** or **Race to 100**, how many players (2 to 5, you
+4. In the **Create a game** box, choose the rules: **Quick game** or **Race to 100**, how many players (2 to 5, you
    included), 1 or 2 jokers, and the call limit (5, 10 or 15).
 5. Press **Create table**. You get a 4-letter table code, like `K7QX`.
 6. Send the code to your friends (**Copy code** puts it on your clipboard), over chat or any
@@ -26,7 +26,7 @@ this repository (see [Install the extension](#install-the-extension)).
 **Join a table (everyone else)**
 
 1. Click the Dhumbal icon (press **New game** if a game is showing) and choose **Friends online**.
-2. Type your name, then the table code under **Join a friend's table**, and press **Join**.
+2. Type your name, then the table code in the **Join a game** box, and press **Join**.
 3. Wait in the lobby until the host presses **Start**.
 
 **While you play**
