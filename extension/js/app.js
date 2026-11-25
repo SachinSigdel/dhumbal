@@ -15,12 +15,17 @@ import { Sounds } from './sound.js';
 // ---------- layout (same numbers as the Python window) ----------
 // Two layouts: a wide table (tab and toolbar popup) and a tall one for Chrome's narrow side panel.
 let W, H, CX, CY, RX, RY, HAND_Y, TOAST_Y, BAR_Y, DECK_Y, PORTRAIT = false;
-// how big cards, text and buttons are drawn (1 = the original size); the narrow side-panel
-// table has no room to spare, so it stays a little smaller
+const MODE = new URLSearchParams(location.search).has('panel') ? 'panel'
+  : new URLSearchParams(location.search).has('popup') ? 'popup' : 'tab';
+// how big cards, text and buttons are drawn (1 = the original size). The toolbar pop-up is capped
+// at 800x600 by Chrome, so the table is shrunk to fit it: draw things bigger there to keep them
+// readable. The narrow side-panel table has no room to spare, so it stays a little smaller.
 let U, BIG, MID, SMALL;
+const MIN_TEXT_PX = 12;          // no text is drawn smaller than this on screen
+let VIEW_SCALE = 1;              // screen pixels per layout unit (set by fit)
 function applyLayout(portrait) {
   PORTRAIT = portrait;
-  U = portrait ? 1.15 : 1.25;
+  U = portrait ? 1.15 : MODE === 'popup' ? 1.4 : 1.25;
   BIG = [72 * U, 104 * U]; MID = [52 * U, 76 * U]; SMALL = [30 * U, 44 * U];
   if (portrait) {
     W = 480; H = 970; CX = 240; CY = 380; RX = 196; RY = 290; HAND_Y = 812; BAR_Y = 940;
@@ -32,8 +37,6 @@ function applyLayout(portrait) {
   TOAST_Y = portrait ? DECK_Y - 54 : CY - 74;
 }
 applyLayout(false);
-const MODE = new URLSearchParams(location.search).has('panel') ? 'panel'
-  : new URLSearchParams(location.search).has('popup') ? 'popup' : 'tab';
 
 // Palette: royal navy felt, burgundy (mahogany) rim and card backs, antique gold, ivory.
 // Navy + gold is the classic court-card pairing; burgundy and ivory warm it up.
@@ -56,7 +59,8 @@ const STATUS_MS = 4500;          // the instruction line fades away after this l
 
 const FONT = '"Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif';
 const CARD_FONT = 'Helvetica, Arial, sans-serif';
-const font = (size, bold = false, family = FONT) => `${bold ? 'bold ' : ''}${u(size)}px ${family}`;
+const font = (size, bold = false, family = FONT) =>
+  `${bold ? 'bold ' : ''}${Math.max(u(size), MIN_TEXT_PX / VIEW_SCALE).toFixed(2)}px ${family}`;
 
 // ---------- small helpers ----------
 function mix(c1, c2, t) {
@@ -163,7 +167,7 @@ class App {
     });
     this.windowId = null;
     globalThis.chrome?.windows?.getCurrent?.().then((w) => { this.windowId = w.id; }).catch(() => {});
-    // Brave doesn't show Chrome's extension side panel, so there we open a slim window instead
+    // Brave doesn't show Chrome's extension side panel, so there we open a big game window instead
     this.isBrave = false;
     globalThis.navigator?.brave?.isBrave?.().then((yes) => { this.isBrave = !!yes; this.requestRender(); }).catch(() => {});
     if (store.get('online', null)?.code) this.resumeOnline();
@@ -205,6 +209,7 @@ class App {
       this.background = this.paintBackground();
     }
     this.scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+    VIEW_SCALE = this.scale;
     this.canvas.style.width = `${W * this.scale}px`;
     this.canvas.style.height = `${H * this.scale}px`;
     this.canvas.width = Math.round(W * this.scale * dpr);
@@ -238,7 +243,7 @@ class App {
 
   /** From the popup: move the game into Chrome's side panel, which stays open while you browse. */
   /** From the popup: keep the game open while you browse. Chrome: its side panel.
-   *  Brave (no extension side panel) or anywhere the side panel fails: a slim Dhumbal window. */
+   *  Brave (no extension side panel) or anywhere the side panel fails: a big Dhumbal window. */
   openSidePanel() {
     const sidePanel = globalThis.chrome?.sidePanel;
     this.save();
@@ -251,7 +256,7 @@ class App {
       .catch(() => this.openGameWindow());
   }
 
-  /** A separate, narrow window with the tall table; reuses the one already open. */
+  /** A separate, big window with the wide table; reuses the one already open. */
   async openGameWindow() {
     const windows = globalThis.chrome?.windows;
     if (!windows?.create) {
@@ -267,12 +272,15 @@ class App {
         return;
       } catch { /* it was closed */ }
     }
-    const height = Math.min(960, (screen.availHeight || 900) - 40);
-    const width = Math.round(height * 0.5);
+    // a big window with the wide table, centred on the screen (it can be resized freely)
+    const availW = screen.availWidth || 1440, availH = screen.availHeight || 900;
+    const width = Math.min(1280, availW - 40);
+    const height = Math.min(Math.round(width * (770 / 1040)) + 60, availH - 40);
     try {
       const w = await windows.create({
-        url: globalThis.chrome.runtime.getURL('game.html?panel'), type: 'popup', width, height,
-        left: Math.max(0, (screen.availWidth || 1440) - width - 16), top: 24, focused: true,
+        url: globalThis.chrome.runtime.getURL('game.html?window'), type: 'popup', width, height,
+        left: Math.max(0, Math.round((screen.availLeft || 0) + (availW - width) / 2)),
+        top: Math.max(0, Math.round((screen.availTop || 0) + (availH - height) / 2)), focused: true,
       });
       store.set('windowId', w.id);
       window.close();
@@ -559,8 +567,11 @@ class App {
     return [Math.min(Math.max(x, edge), W - edge), y];
   }
   botCardPos(index, k, n, revealed = false) {
-    const [x, y] = this.botSeat(index);
+    let [x, y] = this.botSeat(index);
     const step = u(revealed ? 26 : 16);
+    // keep the whole hand on screen (a side seat's revealed hand is wide)
+    const half = (step * (n - 1)) / 2 + (revealed ? MID : SMALL)[0] / 2 + 6;
+    x = Math.min(Math.max(x, half), W - half);
     return [x - (step * (n - 1)) / 2 + k * step, y];
   }
   discardSpot(index) {
@@ -1289,7 +1300,13 @@ class App {
     const bottom = TOAST_Y - 2 - lift;
     c.save();
     c.globalAlpha = alpha;
-    c.shadowColor = 'rgba(0, 0, 0, 0.75)'; c.shadowBlur = 6; c.shadowOffsetY = 1;   // readable without a box
+    // a soft dark backing (no border) keeps it readable where it crosses cards on the table
+    c.font = font(11.5, true);
+    const tw = Math.max(...lines.map((ln) => c.measureText(ln).width)), padX = u(12), padY = u(5);
+    const top = bottom - lines.length * lh - padY;
+    this.rrect(CX - tw / 2 - padX, top, CX + tw / 2 + padX, bottom + padY, (lines.length * lh + 2 * padY) / 2);
+    c.fillStyle = 'rgba(6, 11, 20, 0.62)'; c.fill();
+    c.shadowColor = 'rgba(0, 0, 0, 0.75)'; c.shadowBlur = 6; c.shadowOffsetY = 1;
     lines.forEach((ln, i) => this.text(ln, CX, bottom - (lines.length - i) * lh + lh / 2, { size: 11.5, bold: true, color: TEXT }));
     c.restore();
   }
@@ -1345,19 +1362,18 @@ class App {
     }
     if (this.animating || this.netBusy) return '';
     if (this.netWaiting) return 'Sending…';
-    if (game.phase === OPENING) return `Salami: your hand is ${game.total(HUMAN)} (${OPENING_CALL_LIMIT} or less). Call Salami before anyone throws (if you're not caught, everyone else gets +${SALAMI_BONUS}), or Play on.`;
+    if (game.phase === OPENING) return `Your hand is ${game.total(HUMAN)}: call Salami now (if nobody catches you, everyone else gets +${SALAMI_BONUS}), or Play on.`;
     if (game.phase === PICK) {
       if (game.pickables.length > 1) return 'Pick up: click the deck, or any one of the gold cards.';
       if (game.pickable) return `Pick up: click the deck, or the gold ${cardText(game.pickable)}.`;
-      if (game.availablePick()) return "You haven't thrown a double or sequence yet, so you can't take from the floor. Click the deck.";
+      if (game.availablePick()) return 'Click the deck (floor picks unlock once you throw a double or sequence).';
       return 'Pick up: click the deck.';
     }
     if (game.canCall(HUMAN)) {
-      return `Your total is ${game.total(HUMAN)}: press Call showdown to end ${match.mode === QUICK ? 'the game' : 'the round'}, or keep playing by throwing a card.`;
+      return `Your total is ${game.total(HUMAN)}: press Call showdown, or throw a card to keep playing.`;
     }
-    let s = 'Your turn: click a card to throw it (its pair or sequence goes too). Right-click throws it alone.';
-    if (game.hands[HUMAN].some(isJoker)) s += ' Shift-click a card to play it with your joker.';
-    return s;
+    // the other ways to play a card (alone, with the joker) show up when you hover over it
+    return 'Your turn: click a card to throw it (hover over a card for more ways to play it).';
   }
 }
 
